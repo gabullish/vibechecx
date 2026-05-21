@@ -156,10 +156,18 @@ async def collect_profile(username, headful=False, limit=0, fresh=False,
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=cutoff_days)
 
     async with async_playwright() as p:
+        launch_kw = {"headless": not headful}
         if headful:
             os.environ.setdefault("DISPLAY", ":0")
             os.environ.setdefault("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
-        browser = await p.chromium.launch(headless=not headful)
+            # Playwright 1.50+ defaults to chrome-headless-shell even with
+            # headless=False.  Force the full Chromium binary for headful mode.
+            _full = os.path.expanduser(
+                "~/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome"
+            )
+            if os.path.exists(_full):
+                launch_kw["executablePath"] = _full
+        browser = await p.chromium.launch(**launch_kw)
 
         ctx_a = await _browser.open_context(browser, cookie_path=handle_a.path)
         ctx_b = await _browser.open_context(browser, cookie_path=handle_b.path)
