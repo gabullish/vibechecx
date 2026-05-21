@@ -1,0 +1,38 @@
+# Credentials / secrets
+cookies/
+cookies.json
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+
+# DB data (Postgres local files)
+db/data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+tmp/
+*.bak
+web/platform_context.md
+
+# Collected output
+collector/raw/
+raw/
+
+# Local state
+data/
+dashboard

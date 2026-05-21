@@ -1,0 +1,140 @@
+"""web/security.py — security middleware and helpers.
+
+Covers:
+- Security response headers (clickjacking, MIME sniffing, CSP, referrer)
+- Login rate limiting (per-IP, DB-backed, 10 attempts / 5 min — works across workers)
+- Server header suppression via uvicorn server_header=False
+"""
+import logging
+import psycopg2
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from vibechecx_config import DB_CONFIG as _DB  # noqa: E402
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+logger = logging.getLogger("vibechecx.security")
+
+# ── Security headers ──────────────────────────────────────────────────
+
+_SCRIPT_SOURCES = " ".join([
+    "'self'",
+    "https://cdn.tailwindcss.com",
+    "https://unpkg.com",
+    "'unsafe-inline'",   # HTMX hx-on:* and Alpine x-data need this
+])
+_IMG_SOURCES = " ".join([
+    "'self'",
+    "data:",
+    "https://pbs.twimg.com",   # Twitter profile avatars
+    "https://abs.twimg.com",
+])
+_CSP = (
+    f"default-src 'self'; "
+    f"script-src {_SCRIPT_SOURCES}; "
+    f"style-src 'self' 'unsafe-inline'; "
+    f"img-src {_IMG_SOURCES}; "
+    f"connect-src 'self'; "
+    f"font-src 'self'; "
+    f"frame-ancestors 'none';"   # stronger than X-Frame-Options
+)
+
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options":  "nosniff",
+    "X-Frame-Options":         "DENY",
+    "Referrer-Policy":         "strict-origin-when-cross-origin",
+    "Permissions-Policy":      "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": _CSP,
+}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        for k, v in _SECURITY_HEADERS.items():
+            response.headers[k] = v
+        return response
+
+
+# ── Login rate limiting ───────────────────────────────────────────────
+# DB-backed so it works correctly across multiple uvicorn worker processes.
+# Table created on first use if it doesn't exist.
+
+_WINDOW_SECONDS = 300   # 5 minutes
+_MAX_ATTEMPTS   = 10    # per IP per window
+
+_TABLE_READY = False
+
+
+def _ensure_table():
+    global _TABLE_READY
+    if _TABLE_READY:
+        return
+    conn = psycopg2.connect(**_DB)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            ip TEXT NOT NULL,
+            attempted_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_time ON login_attempts(ip, attempted_at)"
+    )
+    conn.commit()
+    conn.close()
+    _TABLE_READY = True
+
+
+def _client_ip(request: Request) -> str:
+    """Get real IP, honouring Cloudflare / proxy forwarding headers."""
+    for header in ("CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"):
+        val = request.headers.get(header)
+        if val:
+            return val.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def record_failed_login(request: Request) -> None:
+    _ensure_table()
+    ip = _client_ip(request)
+    conn = psycopg2.connect(**_DB)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO login_attempts (ip) VALUES (%s)", (ip,))
+    cur.execute(
+        "SELECT COUNT(*) FROM login_attempts WHERE ip=%s AND attempted_at > NOW() - INTERVAL '5 minutes'",
+        (ip,),
+    )
+    count = cur.fetchone()[0]
+    conn.commit()
+    conn.close()
+    if count >= _MAX_ATTEMPTS:
+        logger.warning("Login rate limit hit: %s (%d failures in %ds)", ip, count, _WINDOW_SECONDS)
+
+
+def is_login_blocked(request: Request) -> bool:
+    _ensure_table()
+    ip = _client_ip(request)
+    conn = psycopg2.connect(**_DB)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT COUNT(*) FROM login_attempts WHERE ip=%s AND attempted_at > NOW() - INTERVAL '5 minutes'",
+        (ip,),
+    )
+    count = cur.fetchone()[0]
+    conn.close()
+    return count >= _MAX_ATTEMPTS
+
+
+def clear_failed_logins(request: Request) -> None:
+    """Call on successful login to reset the counter for this IP."""
+    _ensure_table()
+    ip = _client_ip(request)
+    conn = psycopg2.connect(**_DB)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM login_attempts WHERE ip=%s", (ip,))
+    conn.commit()
+    conn.close()
