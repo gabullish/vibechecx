@@ -156,6 +156,9 @@ async def collect_profile(username, headful=False, limit=0, fresh=False,
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=cutoff_days)
 
     async with async_playwright() as p:
+        if headful:
+            os.environ.setdefault("DISPLAY", ":0")
+            os.environ.setdefault("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
         browser = await p.chromium.launch(headless=not headful)
 
         ctx_a = await _browser.open_context(browser, cookie_path=handle_a.path)
