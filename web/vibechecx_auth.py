@@ -79,16 +79,30 @@ def get_user_from_session(session_id):
     if not session_id: return None
     conn = psycopg2.connect(**DB)
     cur = conn.cursor()
-    cur.execute("""
-        SELECT u.id, u.username, u.created_at, u.is_admin
-        FROM users u
-        JOIN sessions s ON s.user_id = u.id
-        WHERE s.id = %s AND s.expires_at > NOW()
-    """, (session_id,))
-    row = cur.fetchone()
-    conn.close()
-    if not row: return None
-    return {"id": row[0], "username": row[1], "created_at": row[2], "is_admin": row[3]}
+    try:
+        cur.execute("""
+            SELECT u.id, u.username, u.created_at
+            FROM users u
+            JOIN sessions s ON s.user_id = u.id
+            WHERE s.id = %s AND s.expires_at > NOW()
+        """, (session_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return None
+        # is_admin column may not exist on all deployments (e.g. fresh Supabase).
+        # Default to False when missing.
+        try:
+            cur.execute("SELECT is_admin FROM users WHERE id=%s", (row[0],))
+            admin_row = cur.fetchone()
+            is_admin = bool(admin_row[0]) if admin_row else False
+        except Exception:
+            is_admin = False
+        conn.close()
+        return {"id": row[0], "username": row[1], "created_at": row[2], "is_admin": is_admin}
+    except Exception:
+        conn.close()
+        return None
 
 def logout(session_id):
     if not session_id: return

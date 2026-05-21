@@ -73,20 +73,24 @@ def _ensure_table():
     global _TABLE_READY
     if _TABLE_READY:
         return
-    conn = psycopg2.connect(**_DB)
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS login_attempts (
-            ip TEXT NOT NULL,
-            attempted_at TIMESTAMPTZ DEFAULT NOW()
+    try:
+        conn = psycopg2.connect(**_DB)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                ip TEXT NOT NULL,
+                attempted_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_time ON login_attempts(ip, attempted_at)"
         )
-    """)
-    cur.execute(
-        "CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_time ON login_attempts(ip, attempted_at)"
-    )
-    conn.commit()
-    conn.close()
-    _TABLE_READY = True
+        conn.commit()
+        conn.close()
+        _TABLE_READY = True
+    except Exception:
+        logger.warning("login_attempts DDL failed (likely pooler perms) — table assumed existing", exc_info=True)
+        _TABLE_READY = True  # Assume it exists; query will fail at runtime if not.
 
 
 def _client_ip(request: Request) -> str:
@@ -99,42 +103,53 @@ def _client_ip(request: Request) -> str:
 
 
 def record_failed_login(request: Request) -> None:
-    _ensure_table()
-    ip = _client_ip(request)
-    conn = psycopg2.connect(**_DB)
-    cur = conn.cursor()
-    cur.execute("INSERT INTO login_attempts (ip) VALUES (%s)", (ip,))
-    cur.execute(
-        "SELECT COUNT(*) FROM login_attempts WHERE ip=%s AND attempted_at > NOW() - INTERVAL '5 minutes'",
-        (ip,),
-    )
-    count = cur.fetchone()[0]
-    conn.commit()
-    conn.close()
-    if count >= _MAX_ATTEMPTS:
-        logger.warning("Login rate limit hit: %s (%d failures in %ds)", ip, count, _WINDOW_SECONDS)
+    """Record a failed login attempt. Silently degrades if table doesn't exist."""
+    try:
+        _ensure_table()
+        ip = _client_ip(request)
+        conn = psycopg2.connect(**_DB)
+        cur = conn.cursor()
+        cur.execute("INSERT INTO login_attempts (ip) VALUES (%s)", (ip,))
+        cur.execute(
+            "SELECT COUNT(*) FROM login_attempts WHERE ip=%s AND attempted_at > NOW() - INTERVAL '5 minutes'",
+            (ip,),
+        )
+        count = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+        if count >= _MAX_ATTEMPTS:
+            logger.warning("Login rate limit hit: %s (%d failures in %ds)", ip, count, _WINDOW_SECONDS)
+    except Exception:
+        logger.debug("record_failed_login skipped (table/perms issue)", exc_info=True)
 
 
 def is_login_blocked(request: Request) -> bool:
-    _ensure_table()
-    ip = _client_ip(request)
-    conn = psycopg2.connect(**_DB)
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT COUNT(*) FROM login_attempts WHERE ip=%s AND attempted_at > NOW() - INTERVAL '5 minutes'",
-        (ip,),
-    )
-    count = cur.fetchone()[0]
-    conn.close()
-    return count >= _MAX_ATTEMPTS
+    """Check if rate-limited. Returns False on any error (fails open)."""
+    try:
+        _ensure_table()
+        ip = _client_ip(request)
+        conn = psycopg2.connect(**_DB)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM login_attempts WHERE ip=%s AND attempted_at > NOW() - INTERVAL '5 minutes'",
+            (ip,),
+        )
+        count = cur.fetchone()[0]
+        conn.close()
+        return count >= _MAX_ATTEMPTS
+    except Exception:
+        return False
 
 
 def clear_failed_logins(request: Request) -> None:
     """Call on successful login to reset the counter for this IP."""
-    _ensure_table()
-    ip = _client_ip(request)
-    conn = psycopg2.connect(**_DB)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM login_attempts WHERE ip=%s", (ip,))
-    conn.commit()
-    conn.close()
+    try:
+        _ensure_table()
+        ip = _client_ip(request)
+        conn = psycopg2.connect(**_DB)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM login_attempts WHERE ip=%s", (ip,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
