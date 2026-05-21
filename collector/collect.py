@@ -167,7 +167,7 @@ async def collect_profile(username, headful=False, limit=0, fresh=False,
                 "~/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome"
             )
             if os.path.exists(_full):
-                launch_kw["executablePath"] = _full
+                launch_kw["executable_path"] = _full
         browser = await p.chromium.launch(**launch_kw)
 
         ctx_a = await _browser.open_context(browser, cookie_path=handle_a.path)
