@@ -160,7 +160,10 @@ async def collect_profile(username, headful=False, limit=0, fresh=False,
         if headful:
             # Override display: uvicorn/worker env may have DISPLAY=:1 or none.
             os.environ["DISPLAY"] = ":0"
-            os.environ["XAUTHORITY"] = os.path.expanduser("~/.Xauthority")
+            # GDM places Xauthority here; ~/.Xauthority may not exist.
+            _xa = "/run/user/1000/gdm/Xauthority"
+            if os.path.exists(_xa):
+                os.environ["XAUTHORITY"] = _xa
             # Playwright 1.50+ defaults to chrome-headless-shell even with
             # headless=False.  Force the full Chromium binary for headful mode.
             _full = os.path.expanduser(
