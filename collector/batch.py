@@ -47,91 +47,6 @@ class RateLimited(Exception):
     """Worker hit a 429 — main loop re-queues the account."""
 
 
-# ── DB helpers (thin wrappers that own their own connection) ───────────
-
-
-def ensure_account_with_profile(t: dict) -> int | None:
-    """Insert/update account with all profile fields. Returns id or None."""
-    conn = psycopg2.connect(**DB_CONFIG)
-    try:
-        with conn.cursor() as cur:
-            aid = _storage.ensure_account(cur, t["author_username"])
-            if aid:
-                _storage.update_account_profile(cur, aid, tweet=t)
-        conn.commit()
-        return aid
-    except Exception:
-        conn.rollback()
-        logger.warning("ensure_account failed for @%s", t.get("author_username"),
-                       exc_info=True)
-        return None
-    finally:
-        conn.close()
-
-
-def upsert_tweet_record(t: dict) -> str | None:
-    """One transaction per tweet."""
-    aid = ensure_account_with_profile(t)
-    if not aid:
-        return None
-    conn = psycopg2.connect(**DB_CONFIG)
-    try:
-        with conn.cursor() as cur:
-            tid = _storage.upsert_tweet(cur, t, author_account_id=aid,
-                                        scrape_source="batch")
-        conn.commit()
-        return tid
-    except Exception:
-        conn.rollback()
-        logger.warning("upsert_tweet failed for %s", t.get("tweet_id"), exc_info=True)
-        return None
-    finally:
-        conn.close()
-
-
-def log_observation(tweet_id: str, observer_username: str) -> None:
-    """Record that observer saw this tweet (cohort visibility)."""
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        with conn.cursor() as cur:
-            aid = _storage.ensure_account(cur, observer_username)
-            if aid:
-                _storage.log_observation(cur, tweet_id, aid, context="batch")
-        conn.commit()
-        conn.close()
-    except Exception:
-        logger.warning("log_observation failed for %s", tweet_id, exc_info=True)
-
-
-def insert_media_records(tweet_id: str, media: list) -> None:
-    if not media:
-        return
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        with conn.cursor() as cur:
-            _storage.insert_media(cur, tweet_id, media)
-        conn.commit()
-        conn.close()
-    except Exception:
-        logger.warning("media insert failed for %s", tweet_id, exc_info=True)
-
-
-def snapshot_account(username: str) -> None:
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        cur.execute("SELECT id FROM accounts WHERE username=%s", (username,))
-        row = cur.fetchone()
-        if row:
-            aid = row[0]
-            _storage.stamp_account_updated(cur, aid)
-            _storage.record_account_snapshot(cur, aid)
-        conn.commit()
-        conn.close()
-    except Exception:
-        logger.warning("snapshot failed for @%s", username, exc_info=True)
-
-
 # ── Worker ──────────────────────────────────────────────────────────────
 
 
@@ -237,21 +152,58 @@ class Worker:
 
             imported_target = 0
             imported_context = 0
-            for t in tweets:
-                tid = upsert_tweet_record(t)
-                if tid:
-                    is_target = (t.get("author_username") or "").lower() == username.lower()
-                    if is_target:
-                        imported_target += 1
+            try:
+                conn, supaconn, cur = _storage.dual_connect()
+                # Resolve observer (the target account being scraped)
+                observer_aid = _storage.ensure_account(cur, username)
+                for t in tweets:
+                    if not t.get("tweet_id"):
+                        continue
+                    aid = _storage.ensure_account(cur, t["author_username"])
+                    if not aid:
+                        continue
+                    try:
+                        _storage.update_account_profile(cur, aid, tweet=t)
+                    except Exception:
+                        logger.warning("account UPDATE failed for @%s",
+                                       t.get("author_username"), exc_info=True)
+                        conn.rollback()
+                        if supaconn:
+                            supaconn.rollback()
+                    tid = _storage.upsert_tweet(cur, t, author_account_id=aid,
+                                                scrape_source="batch")
+                    if tid:
+                        is_target = (t.get("author_username") or "").lower() == username.lower()
+                        if is_target:
+                            imported_target += 1
+                        else:
+                            imported_context += 1
+                        if observer_aid:
+                            _storage.log_observation(cur, tid, observer_aid,
+                                                     context="batch")
+                        if t.get("media"):
+                            _storage.insert_media(cur, tid, t["media"])
+                        _storage.dual_commit(conn, supaconn)
                     else:
-                        imported_context += 1
-                    log_observation(tid, username)
-                    if t.get("media"):
-                        insert_media_records(tid, t["media"])
+                        conn.rollback()
+                        if supaconn:
+                            supaconn.rollback()
+                # Snapshot after all tweets stored
+                cur.execute("SELECT id FROM accounts WHERE username=%s", (username,))
+                row = cur.fetchone()
+                if row:
+                    _storage.stamp_account_updated(cur, row[0])
+                    _storage.record_account_snapshot(cur, row[0])
+                _storage.dual_commit(conn, supaconn)
+                conn.close()
+                if supaconn:
+                    supaconn.close()
+            except Exception:
+                logger.warning("dual-write store failed for @%s", username,
+                               exc_info=True)
 
             self.tweets_collected += imported_target
             self.accounts_done += 1
-            snapshot_account(username)
             default_pool().report_success(self.handle)
 
             logger.info("[W%d] @%s: %d target tweets + %d context",

@@ -18,15 +18,13 @@ import os
 import sys
 import traceback
 
-import psycopg2
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web",
 ))
 
-from vibechecx_config import DB_CONFIG as DB, COOKIE_DIR  # noqa: E402
+from vibechecx_config import COOKIE_DIR  # noqa: E402
 
 from lib import session as _session  # noqa: E402
 from lib import browser as _browser  # noqa: E402
@@ -44,32 +42,34 @@ logger = logging.getLogger("vibechecx.replymine")
 
 
 def insert_reply(parent_tweet_id, parent_author_username, reply_tweet):
-    """Store one reply tweet. Returns reply_id or None."""
-    conn = psycopg2.connect(**DB)
+    """Store one reply tweet. Dual-writes to local + Supabase. Returns reply_id or None."""
     try:
-        with conn.cursor() as cur:
-            author_username = reply_tweet.get("author_username", "")
-            if not author_username:
-                return None
-            author_id = _storage.ensure_account(cur, author_username)
-            if not author_id:
-                return None
-            rid = _storage.insert_reply(
-                cur,
-                parent_tweet_id=parent_tweet_id,
-                parent_username=parent_author_username,
-                reply=reply_tweet,
-                reply_author_account_id=author_id,
-            )
-        conn.commit()
+        conn, supaconn, cur = _storage.dual_connect()
+        author_username = reply_tweet.get("author_username", "")
+        if not author_username:
+            conn.close()
+            if supaconn: supaconn.close()
+            return None
+        author_id = _storage.ensure_account(cur, author_username)
+        if not author_id:
+            conn.close()
+            if supaconn: supaconn.close()
+            return None
+        rid = _storage.insert_reply(
+            cur,
+            parent_tweet_id=parent_tweet_id,
+            parent_username=parent_author_username,
+            reply=reply_tweet,
+            reply_author_account_id=author_id,
+        )
+        _storage.dual_commit(conn, supaconn)
+        conn.close()
+        if supaconn: supaconn.close()
         return rid
     except Exception:
-        conn.rollback()
         logger.warning("insert_reply failed for %s", reply_tweet.get("tweet_id"),
                        exc_info=True)
         return None
-    finally:
-        conn.close()
 
 
 # ── mine_replies (Playwright) ──────────────────────────────────────────

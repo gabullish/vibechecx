@@ -109,34 +109,33 @@ def _invalidate_insights_for_scope(scope):
     every member account's cache. Silent on failure — caching is a UX win, not
     a correctness requirement."""
     try:
-        import psycopg2
-        from lib.storage import invalidate_insights_cache
-        conn = psycopg2.connect(**DB_CONFIG)
+        from lib.storage import invalidate_insights_cache, dual_connect, dual_commit
+        conn, supaconn, cur = dual_connect()
         try:
-            with conn.cursor() as cur:
-                if scope.get("cohort_id"):
-                    n = invalidate_insights_cache(
-                        cur, scope_type="cohort", scope_id=scope["cohort_id"],
+            if scope.get("cohort_id"):
+                n = invalidate_insights_cache(
+                    cur, scope_type="cohort", scope_id=scope["cohort_id"],
+                )
+                logger.info("invalidated %d insights_cache rows for cohort %s",
+                            n, scope["cohort_id"])
+            else:
+                handles = scope.get("handles") or []
+                if handles:
+                    cur.execute(
+                        "SELECT id FROM accounts WHERE LOWER(username) = ANY(%s)",
+                        ([h.lower() for h in handles],),
                     )
-                    logger.info("invalidated %d insights_cache rows for cohort %s",
-                                n, scope["cohort_id"])
-                else:
-                    handles = scope.get("handles") or []
-                    if handles:
-                        # Look up the account ids for the handles
-                        cur.execute(
-                            "SELECT id FROM accounts WHERE LOWER(username) = ANY(%s)",
-                            ([h.lower() for h in handles],),
+                    for (account_id,) in cur.fetchall():
+                        invalidate_insights_cache(
+                            cur, scope_type="account", scope_id=account_id,
                         )
-                        for (account_id,) in cur.fetchall():
-                            invalidate_insights_cache(
-                                cur, scope_type="account", scope_id=account_id,
-                            )
-                        logger.info("invalidated insights_cache for %d account(s)",
-                                    len(handles))
-            conn.commit()
+                    logger.info("invalidated insights_cache for %d account(s)",
+                                len(handles))
+            dual_commit(conn, supaconn)
         finally:
             conn.close()
+            if supaconn:
+                supaconn.close()
     except Exception:
         logger.warning("insights cache invalidation failed (non-fatal)",
                        exc_info=True)

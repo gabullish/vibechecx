@@ -24,8 +24,6 @@ import sys
 import time
 import traceback
 
-import psycopg2
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(
@@ -51,17 +49,20 @@ logger = logging.getLogger("vibechecx.patrol")
 
 
 def update_metrics_batch(metrics: dict[str, dict]) -> int:
-    """Bulk UPDATE tweet metrics. One transaction for the whole batch."""
+    """Bulk UPDATE tweet metrics. Dual-writes to local + Supabase."""
     if not metrics:
         return 0
-    conn = psycopg2.connect(**DB)
     try:
-        with conn.cursor() as cur:
-            updated = _storage.update_tweet_metrics_batch(cur, metrics)
-        conn.commit()
-        return updated
-    finally:
+        conn, supaconn, cur = _storage.dual_connect()
+        updated = _storage.update_tweet_metrics_batch(cur, metrics)
+        _storage.dual_commit(conn, supaconn)
         conn.close()
+        if supaconn:
+            supaconn.close()
+        return updated
+    except Exception:
+        logger.warning("update_metrics_batch failed", exc_info=True)
+        return 0
 
 
 # ── Playwright (default) implementation ────────────────────────────────
