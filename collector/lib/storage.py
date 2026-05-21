@@ -16,6 +16,87 @@ from typing import Iterable, Mapping
 logger = logging.getLogger("vibechecx.storage")
 
 
+# ── Dual-write cursor (local + Supabase) ──────────────────────────────
+
+
+class DualCursor:
+    """Wraps two cursors so every write hits both databases.
+
+    Usage:
+        conn_local = psycopg2.connect(**DB_CONFIG)
+        conn_supabase = psycopg2.connect(**SUPABASE_DB_CONFIG) if SUPABASE_DB_CONFIG else None
+        cur = DualCursor(conn_local.cursor(), conn_supabase.cursor() if conn_supabase else None)
+
+    All storage functions accept a single `cur` — no signature changes needed.
+    """
+
+    def __init__(self, primary, secondary=None):
+        self.primary = primary
+        self.secondary = secondary
+
+    def execute(self, query, vars=None):
+        self.primary.execute(query, vars)
+        if self.secondary is not None:
+            try:
+                self.secondary.execute(query, vars)
+            except Exception:
+                logger.warning("Supabase write failed (query trimmed): %s",
+                               query[:80], exc_info=True)
+
+    def executemany(self, query, vars_list):
+        self.primary.executemany(query, vars_list)
+        if self.secondary is not None:
+            try:
+                self.secondary.executemany(query, vars_list)
+            except Exception:
+                logger.warning("Supabase executemany failed: %s", query[:80],
+                               exc_info=True)
+
+    def fetchone(self):
+        return self.primary.fetchone()
+
+    def fetchall(self):
+        return self.primary.fetchall()
+
+    @property
+    def rowcount(self):
+        return self.primary.rowcount
+
+    @property
+    def description(self):
+        return self.primary.description
+
+
+def dual_connect():
+    """Open connections to local DB and (if configured) Supabase.
+
+    Returns (local_conn, supabase_conn, DualCursor).
+    supabase_conn is None when SUPABASE_DB_CONFIG is not set.
+    """
+    import psycopg2
+    from vibechecx_config import DB_CONFIG, SUPABASE_DB_CONFIG
+
+    local_conn = psycopg2.connect(**DB_CONFIG)
+    supabase_conn = None
+    if SUPABASE_DB_CONFIG:
+        try:
+            supabase_conn = psycopg2.connect(**SUPABASE_DB_CONFIG)
+        except Exception:
+            logger.warning("Supabase connection failed — continuing with local DB only", exc_info=True)
+    cur = DualCursor(local_conn.cursor(), supabase_conn.cursor() if supabase_conn else None)
+    return local_conn, supabase_conn, cur
+
+
+def dual_commit(local_conn, supabase_conn):
+    """Commit both connections."""
+    local_conn.commit()
+    if supabase_conn is not None:
+        try:
+            supabase_conn.commit()
+        except Exception:
+            logger.warning("Supabase commit failed", exc_info=True)
+
+
 # ── accounts ────────────────────────────────────────────────────────────
 
 

@@ -313,8 +313,7 @@ async def collect_profile(username, headful=False, limit=0, fresh=False,
         inserted_target = 0
         inserted_context = 0
         try:
-            conn = psycopg2.connect(**DB_CONFIG)
-            cur = conn.cursor()
+            conn, supaconn, cur = _storage.dual_connect()
             for t in all_tweets:
                 if not t.get("tweet_id"):
                     continue
@@ -328,17 +327,20 @@ async def collect_profile(username, headful=False, limit=0, fresh=False,
                 except Exception:
                     logger.warning("account UPDATE failed for @%s", au, exc_info=True)
                     conn.rollback()
+                    if supaconn: supaconn.rollback()
                 tid = _storage.upsert_tweet(cur, t, author_account_id=aid,
                                             scrape_source="collect")
                 if tid:
-                    conn.commit()
+                    _storage.dual_commit(conn, supaconn)
                     if is_target:
                         inserted_target += 1
                     else:
                         inserted_context += 1
                 else:
                     conn.rollback()
+                    if supaconn: supaconn.rollback()
             conn.close()
+            if supaconn: supaconn.close()
             logger.info("DB: %d stored for @%s + %d context tweets",
                         inserted_target, username, inserted_context)
         except Exception:
@@ -346,16 +348,16 @@ async def collect_profile(username, headful=False, limit=0, fresh=False,
 
     # Snapshot account stats for growth tracking.
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
+        conn, supaconn, cur = _storage.dual_connect()
         cur.execute("SELECT id FROM accounts WHERE username=%s", (username,))
         row = cur.fetchone()
         if row:
             aid = row[0]
             _storage.stamp_account_updated(cur, aid)
             _storage.record_account_snapshot(cur, aid)
-        conn.commit()
+        _storage.dual_commit(conn, supaconn)
         conn.close()
+        if supaconn: supaconn.close()
     except Exception:
         logger.warning("post-scrape account-stamp failed", exc_info=True)
 

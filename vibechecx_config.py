@@ -19,6 +19,18 @@ DB_CONFIG = {
     "password": _env("VIBECHECX_DB_PASSWORD", "vibechecx_pass"),
 }
 
+SUPABASE_DB_CONFIG = (
+    {
+        "host": _env("SUPABASE_DB_HOST", ""),
+        "port": int(_env("SUPABASE_DB_PORT", "5432")),
+        "dbname": _env("SUPABASE_DB_NAME", "postgres"),
+        "user": _env("SUPABASE_DB_USER", "postgres"),
+        "password": _env("SUPABASE_DB_PASSWORD", ""),
+    }
+    if _env("SUPABASE_DB_HOST", "")
+    else None
+)
+
 
 def db_dsn():
     c = DB_CONFIG
