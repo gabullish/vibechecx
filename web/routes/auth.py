@@ -60,6 +60,17 @@ async def login_post(r: Request):
     f = await r.form()
     u = (f.get("username") or "").strip()
     p = f.get("password") or ""
+    try:
+        uid, err = auth_login(u, p)
+    except Exception as e:
+        import traceback
+        logger = __import__('logging').getLogger('vibechecx.auth')
+        logger.error("auth_login crashed for user=%s: %s", u, traceback.format_exc())
+        return HTMLResponse(
+            AH + '<div class="bg-red-900/50 text-red-300 text-sm p-4 rounded-lg text-center">'
+            f'Internal error: {html.escape(str(e)[:200])}</div>' + AF,
+            status_code=500,
+        )
     uid, err = auth_login(u, p)
     if err:
         record_failed_login(r)
