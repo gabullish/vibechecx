@@ -71,7 +71,6 @@ async def login_post(r: Request):
             f'Internal error: {html.escape(str(e)[:200])}</div>' + AF,
             status_code=500,
         )
-    uid, err = auth_login(u, p)
     if err:
         record_failed_login(r)
         return login_page(r, error=err)

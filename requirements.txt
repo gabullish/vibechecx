@@ -7,3 +7,6 @@ httpx>=0.27
 openai>=1.0
 jinja2>=3.0
 starlette>=1.0
+python-multipart>=0.0.20
+playwright
+playwright-stealth
