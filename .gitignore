@@ -37,3 +37,4 @@ raw/
 data/
 dashboard
 sync.sh
+render-worker.sh
