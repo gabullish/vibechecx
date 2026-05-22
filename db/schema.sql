@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS scrape_sessions (
     replies_collected INTEGER DEFAULT 0,
     pid INTEGER,
     started_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
     last_heartbeat_at TIMESTAMPTZ,
     ended_at TIMESTAMPTZ,
     error_log TEXT
