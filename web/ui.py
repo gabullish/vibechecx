@@ -560,7 +560,9 @@ def _cookie_health():
         conn = psycopg2.connect(**DB_CONFIG, connect_timeout=5)
         cur = conn.cursor()
         cur.execute(
-            "SELECT slot_name, size_bytes, age_seconds, last_seen_at "
+            "SELECT slot_name, size_bytes, "
+            "age_seconds + EXTRACT(EPOCH FROM NOW() - last_seen_at) AS age_seconds, "
+            "last_seen_at "
             "FROM public.cookie_health ORDER BY slot_name"
         )
         rows = {r[0]: r for r in cur.fetchall()}

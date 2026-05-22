@@ -181,7 +181,15 @@ Three failure modes that will get the response rejected:
 
   FAIL 2, PAINT-BY-NUMBERS REPLICATION. If the best-performing post is a joke about chickens crossing the road, do NOT propose ten chicken variations. Identify WHAT made it work (e.g. in-group reference, photo as proof, timing of an event) and propose DISTINCT content directions that share the same underlying principle.
 
-  FAIL 3, TAUTOLOGICAL "WHY"s. "Humor triggered in-group recognition driving 86 likes" is a tautology, it describes the content and restates the metric. The right answer names the REAL-WORLD CIRCUMSTANCE that made the content possible: physical presence at an event, an insider reference only a member would catch, a moment of public alignment with a partner. Strategy lives in causes, not labels.
+  FAIL 3, TAUTOLOGICAL "WHY"s. "Humor triggered in-group recognition driving 86 likes" is a tautology: it describes the content and restates the metric. The right answer names the REAL-WORLD CIRCUMSTANCE that made the content possible.
+
+    BEFORE (bad): "Wit and community alignment triggered strong in-group recognition, producing 86 likes."
+    AFTER (good): "Only someone physically present at the hackathon could have posted that photo in real time — competitors commenting remotely cannot replicate it."
+
+    BEFORE (bad): "Relatable humor resonated with the audience."
+    AFTER (good): "The joke landed because it referenced an inside term (@community used it 3 days earlier); timing, not skill, was the barrier."
+
+    Strategy lives in causes and barriers, not content labels.
 
 STRATEGIC THESIS (most important field):
 
@@ -246,6 +254,14 @@ H3. HONEST CALIBRATION. Do NOT default to a "winning" framing. The strategic the
   • Mixed metrics → thesis names the role the account is ATTEMPTING with explicit acknowledgment of where execution falls short.
   • Below-average metrics → thesis names the structural problem honestly. Do not invent a niche the account is "winning" if the data does not support it.
   Test your thesis: would it apply equally to a much better account in the same niche? If yes, it is flattery, not analysis. Tighten until the thesis is falsifiable.
+
+  FORBIDDEN OPENERS for strategic_thesis (these will fail review):
+    BAD: "@handle is winning the role of..." (presupposes victory the data may not support)
+    BAD: "@handle is winning [niche]..." (same problem)
+    BAD: "@handle is dominating..." (same problem)
+    GOOD: "@handle is making a credible case for [role] by..." (hedged, falsifiable)
+    GOOD: "@handle is attempting to own [role]; the data shows partial traction in X but not yet Y." (honest calibration)
+    GOOD: "@handle's content strategy is built around [observable behaviour]; whether this translates to [outcome] is the open question." (hypothesis framing)
 
 H4. CORRELATION VS CAUSATION. The data is observational, not experimental. Use "associated with", "pairs with", "co-occurs with", "performs alongside" when describing relationships between content traits and metrics. Reserve "drives", "causes", "produces", "delivers" for cases where the input payload contains an explicit causal field (very rare; usually none). The 18x media advantage is correlation: higher-effort posts are also more likely to be media posts. Phrase accordingly.
 
@@ -1366,14 +1382,28 @@ def generate_insights(scope_type, scope_id, period="7d"):
 
     internal_handles, allow_tweet_ids, external_handles = _build_allowlist(data, scope_type)
     # Default order: DeepSeek primary, OpenAI 4o-mini second, Grok last.
-    # Admin can override via the `data/primary_provider` file (written from /admin).
-    _primary_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "primary_provider")
+    # Admin can override via app_settings table (persists across redeploys).
+    # Falls back to the local file for dev environments without a DB write.
     _primary = ""
     try:
-        if os.path.exists(_primary_file):
-            _primary = open(_primary_file).read().strip().lower()
+        import psycopg2 as _pg2
+        from psycopg2.extras import RealDictCursor as _RDC
+        _sc = _pg2.connect(**DB_CONFIG, cursor_factory=_RDC, connect_timeout=3)
+        with _sc, _sc.cursor() as _cur:
+            _cur.execute("SELECT value FROM app_settings WHERE key='primary_provider'")
+            _row = _cur.fetchone()
+            if _row:
+                _primary = _row["value"].strip().lower()
+        _sc.close()
     except Exception:
         pass
+    if not _primary:
+        _primary_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "primary_provider")
+        try:
+            if os.path.exists(_primary_file):
+                _primary = open(_primary_file).read().strip().lower()
+        except Exception:
+            pass
     _orders = {
         "openai":   [openai_p, deepseek, grok],
         "grok":     [grok, deepseek, openai_p],

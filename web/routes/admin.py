@@ -288,13 +288,9 @@ def admin_page(r: Request):
         + _provider_row("Grok",    xai_api_key(),     "VIBECHECX_GROK_MODEL",     "grok-4.20-0309")
     )
 
-    # Primary provider toggle
-    primary_file = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "data", "primary_provider",
-    )
+    # Primary provider toggle — read from DB (persists across Render redeploys)
     try:
-        current_primary = open(primary_file).read().strip().lower() if os.path.exists(primary_file) else "deepseek"
+        current_primary = (q("SELECT value FROM app_settings WHERE key='primary_provider'") or [{}])[0].get("value", "deepseek").strip().lower()
     except Exception:
         current_primary = "deepseek"
     if current_primary not in ("deepseek", "openai", "grok"):
@@ -376,11 +372,9 @@ async def set_primary_provider(r: Request):
     choice = (form.get("primary") or "").strip().lower()
     if choice not in ("deepseek", "openai", "grok"):
         return RedirectResponse("/admin", status_code=303)
-    data_dir = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "data",
+    q(
+        "INSERT INTO app_settings(key, value, updated_at) VALUES ('primary_provider', %s, NOW()) "
+        "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()",
+        (choice,),
     )
-    os.makedirs(data_dir, exist_ok=True)
-    with open(os.path.join(data_dir, "primary_provider"), "w") as f:
-        f.write(choice)
     return RedirectResponse("/admin", status_code=303)

@@ -193,13 +193,13 @@ def _render_insights(*, result, scope_type, scope_key, scope_display, period, pr
             tip(
                 classification_label,
                 f'Account archetype this strategist assigns:\n\n'
-                f'• <strong>community_mascot</strong> — a personal voice that '
+                f'• <strong>community_mascot</strong>: a personal voice that '
                 f'represents a project to its community.\n'
-                f'• <strong>brand</strong> — official voice of a product or org.\n'
-                f'• <strong>creator</strong> — independent voice with personal '
+                f'• <strong>brand</strong>: official voice of a product or org.\n'
+                f'• <strong>creator</strong>: independent voice with personal '
                 f'authority in a niche.\n'
-                f'• <strong>media</strong> — publication-style coverage.\n'
-                f'• <strong>community_hub</strong> — connector account that '
+                f'• <strong>media</strong>: publication-style coverage.\n'
+                f'• <strong>community_hub</strong>: connector account that '
                 f'amplifies others.\n\n'
                 + (f'<strong>For this account:</strong> {ac_explain}' if ac_explain else ''),
             )
@@ -425,7 +425,7 @@ def _render_insights(*, result, scope_type, scope_key, scope_display, period, pr
         '<div class="flex items-start gap-2 text-sm text-gray-300 leading-relaxed">'
         '<span class="text-purple-400 leading-none mt-0.5 shrink-0">🏆</span>'
         f'<div>{_kudos_handle_link(k.get("handle"))} '
-        f'<span class="text-gray-400">— {linkify(k.get("reason") or "")}</span></div>'
+        f'<span class="text-gray-400">{linkify(k.get("reason") or "")}</span></div>'
         '</div>'
         for k in kudos[:6] if k.get("handle")
     )
@@ -565,7 +565,7 @@ def _insight_to_markdown(insight: dict, scope_display: str, period: str,
         lines.append(f"\n## Period summary\n{ps}")
     ac = insight.get("account_classification") or {}
     if ac.get("type"):
-        lines.append(f"\n**Account type:** {ac.get('type')} — {ac.get('explanation','')}")
+        lines.append(f"\n**Account type:** {ac.get('type')}: {ac.get('explanation','')}")
     pi = insight.get("posting_insight")
     if pi:
         lines.append(f"\n**Posting insight:** {pi}")
@@ -616,7 +616,7 @@ def _insight_to_markdown(insight: dict, scope_display: str, period: str,
     if kudos:
         lines.append("\n## 🏆 Kudos")
         for k in kudos:
-            lines.append(f"- **{k.get('handle','?')}** — {k.get('reason','')}")
+            lines.append(f"- **{k.get('handle','?')}**: {k.get('reason','')}")
     cs = insight.get("content_series") or []
     if cs:
         lines.append("\n## 📺 Recurring series")

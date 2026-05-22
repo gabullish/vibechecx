@@ -135,11 +135,39 @@ def _get_session_status(session_id: int) -> str | None:
         return row["status"] if row else None
 
 
+def _reconcile_orphaned():
+    """Mark 'running' queue rows whose scrape_session is already terminal.
+
+    Handles the case where the Boto worker was restarted mid-scrape: the
+    coordinator may have finished (and updated scrape_sessions) but _current_proc
+    was lost, so _tick() never called _mark_done().  We detect this by joining
+    against the session row — if the session is done, so is the queue job.
+    """
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT q.id, s.status AS sess_status
+              FROM scrape_queue q
+              JOIN scrape_sessions s ON s.id = q.session_id
+             WHERE q.status = 'running'
+               AND s.status IN ('completed', 'failed', 'cancelled')
+            """
+        )
+        rows = cur.fetchall()
+    for row in rows:
+        final = "completed" if row["sess_status"] == "completed" else "failed"
+        _mark_done(row["id"], final)
+        logger.info("Reconciled orphaned queue row %s → %s", row["id"], final)
+
+
 def _tick():
     """Single queue tick — called every 5s by the worker loop."""
     global _current_proc, _current_queue_id
 
     with _lock:
+        # Reconcile any queue rows orphaned by a prior worker restart.
+        _reconcile_orphaned()
+
         # Check if current job finished.
         if _current_proc is not None:
             ret = _current_proc.poll()
