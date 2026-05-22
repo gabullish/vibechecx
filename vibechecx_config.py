@@ -4,11 +4,54 @@ Single source of truth for DB credentials, API keys, and paths. Reads from
 environment variables with localhost defaults so dev works without setup.
 """
 import os
+import socket
+import logging
+
+_log = logging.getLogger("vibechecx.config")
 
 
 def _env(name, default):
     v = os.environ.get(name)
     return v if v else default
+
+
+def _resolve_supabase_host(host, port, user):
+    """Auto-resolve Supabase IPv6-only hosts to the IPv4-compatible pooler.
+
+    Render's free tier can't make outbound IPv6 connections. Supabase's
+    direct connection hostnames (db.XXXXX.supabase.co) resolve only to
+    IPv6. The Supavisor pooler (aws-0-{region}.pooler.supabase.com)
+    has IPv4 and works from Render.
+
+    Returns (host, port, user) — unchanged if host already has IPv4 or
+    isn't a Supabase host.
+    """
+    if not host or ".supabase.co" not in host:
+        return host, port, user
+
+    # Already has IPv4? Use as-is.
+    try:
+        socket.getaddrinfo(host, port, socket.AF_INET)
+        return host, port, user
+    except socket.gaierror:
+        pass
+
+    # Extract project ref from hostname like "db.abcdef.supabase.co"
+    # Parts: ["db", "PROJECT_REF", "supabase", "co"]
+    parts = host.split(".")
+    project_ref = parts[1] if len(parts) >= 4 and parts[0] == "db" else parts[0]
+
+    # Determine region from the project host or default to us-east-1
+    # The pooler format is aws-0-{region}.pooler.supabase.com
+    pooler_host = f"aws-0-us-east-1.pooler.supabase.com"
+    pooler_port = 6543  # Transaction mode pooler
+    pooler_user = f"{user}.{project_ref}"
+
+    _log.info(
+        "Supabase host %s is IPv6-only; switching to pooler %s:%d as user %s",
+        host, pooler_host, pooler_port, pooler_user,
+    )
+    return pooler_host, pooler_port, pooler_user
 
 
 DB_CONFIG = {
@@ -18,18 +61,27 @@ DB_CONFIG = {
     "user": _env("VIBECHECX_DB_USER", "vibechecx"),
     "password": _env("VIBECHECX_DB_PASSWORD", "vibechecx_pass"),
 }
+# Auto-resolve IPv6-only Supabase hosts to the IPv4 pooler.
+DB_CONFIG["host"], DB_CONFIG["port"], DB_CONFIG["user"] = _resolve_supabase_host(
+    DB_CONFIG["host"], DB_CONFIG["port"], DB_CONFIG["user"],
+)
 
-SUPABASE_DB_CONFIG = (
-    {
-        "host": _env("SUPABASE_DB_HOST", ""),
-        "port": int(_env("SUPABASE_DB_PORT", "5432")),
+
+SUPABASE_DB_CONFIG: dict | None = None
+_supabase_host = _env("SUPABASE_DB_HOST", "")
+if _supabase_host:
+    _supabase_port = int(_env("SUPABASE_DB_PORT", "5432"))
+    _supabase_user = _env("SUPABASE_DB_USER", "postgres")
+    _supabase_host, _supabase_port, _supabase_user = _resolve_supabase_host(
+        _supabase_host, _supabase_port, _supabase_user,
+    )
+    SUPABASE_DB_CONFIG = {
+        "host": _supabase_host,
+        "port": _supabase_port,
         "dbname": _env("SUPABASE_DB_NAME", "postgres"),
-        "user": _env("SUPABASE_DB_USER", "postgres"),
+        "user": _supabase_user,
         "password": _env("SUPABASE_DB_PASSWORD", ""),
     }
-    if _env("SUPABASE_DB_HOST", "")
-    else None
-)
 
 
 def db_dsn():

@@ -36,3 +36,4 @@ raw/
 # Local state
 data/
 dashboard
+sync.sh
