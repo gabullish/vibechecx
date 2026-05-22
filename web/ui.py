@@ -518,29 +518,74 @@ def _vibe(scope_type, scope_id, period_label="7d"):
 
 
 def _cookie_health():
-    """Return list of {file, ok, age_days, size}."""
+    """Return list of {file, ok, age_days, size}.
+
+    Checks local COOKIE_DIR first.  If none exist (e.g. on Render where
+    the filesystem is separate), falls back to the cookie_health table in
+    the configured database — populated by the local machine's setup script.
+    """
     files = ["main.json", "scraper1.json", "scraper2.json"]
+    slot_names = [f.replace(".json", "") for f in files]
     results = []
-    for f in files:
-        p = os.path.join(COOKIE_DIR, f)
-        if not os.path.exists(p):
-            results.append({"file": f, "ok": False, "age_days": None,
-                            "size": 0, "reason": "missing"})
-            continue
-        try:
-            st = os.stat(p)
-            age_days = (time.time() - st.st_mtime) / 86400
-            size = st.st_size
+
+    # Try local files first
+    any_local = any(os.path.exists(os.path.join(COOKIE_DIR, f)) for f in files)
+    if any_local:
+        for f in files:
+            p = os.path.join(COOKIE_DIR, f)
+            if not os.path.exists(p):
+                results.append({"file": f, "ok": False, "age_days": None,
+                                "size": 0, "reason": "missing"})
+                continue
+            try:
+                st = os.stat(p)
+                age_days = (time.time() - st.st_mtime) / 86400
+                size = st.st_size
+                ok = size > 200 and age_days < 30
+                results.append({
+                    "file": f, "ok": ok, "age_days": round(age_days, 1), "size": size,
+                    "reason": "" if ok else (
+                        "stale" if age_days >= 30 else "too small (login may be expired)"
+                    ),
+                })
+            except OSError:
+                results.append({"file": f, "ok": False, "age_days": None,
+                                "size": 0, "reason": "unreadable"})
+        return results
+
+    # No local files — try DB fallback (Render deployment)
+    try:
+        from vibechecx_config import DB_CONFIG
+        import psycopg2
+        conn = psycopg2.connect(**DB_CONFIG, connect_timeout=5)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT slot_name, size_bytes, age_seconds, last_seen_at "
+            "FROM public.cookie_health ORDER BY slot_name"
+        )
+        rows = {r[0]: r for r in cur.fetchall()}
+        conn.close()
+    except Exception:
+        rows = {}
+
+    for slot, fname in zip(slot_names, files):
+        row = rows.get(slot)
+        if row:
+            size = row[1]
+            age_days = row[2] / 86400
             ok = size > 200 and age_days < 30
             results.append({
-                "file": f, "ok": ok, "age_days": age_days, "size": size,
+                "file": fname,
+                "ok": ok,
+                "age_days": round(age_days, 1),
+                "size": size,
                 "reason": "" if ok else (
                     "stale" if age_days >= 30 else "too small (login may be expired)"
                 ),
             })
-        except OSError:
-            results.append({"file": f, "ok": False, "age_days": None,
-                            "size": 0, "reason": "unreadable"})
+        else:
+            results.append({"file": fname, "ok": False, "age_days": None,
+                            "size": 0, "reason": "missing"})
     return results
 
 
