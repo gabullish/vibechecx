@@ -119,7 +119,7 @@ async def _startup():
     # On Render, the queue worker runs on the local Boto machine instead
     # (Boto has the actual Playwright browser + cookies).
     if os.environ.get("RENDER"):
-        logger.info("RENDER=1 — queue worker disabled; Boto handles scrapes")
+        _err_log.info("RENDER=1 — queue worker disabled; Boto handles scrapes")
         return
 
     lock_path = os.path.join(tempfile.gettempdir(), "vibechecx_queue_worker.lock")
