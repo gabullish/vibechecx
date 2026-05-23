@@ -26,6 +26,15 @@ from web.queue_worker import (  # noqa: E402
 
 router = APIRouter()
 
+# Every response from /scrape-progress must carry this class string so the div
+# stays fixed-position across all HTMX swaps. Losing these classes on any swap
+# causes the element to revert to block-flow and push page content on every poll.
+_SP_IDLE = (
+    '<div id="scrape-progress" '
+    'class="fixed top-14 right-4 z-50 w-80 pointer-events-none" '
+    'hx-get="/scrape-progress" hx-trigger="every 5s" hx-swap="outerHTML transition:true"></div>'
+)
+
 
 @router.get("/scrapes", response_class=HTMLResponse)
 def scrapes(r: Request):
@@ -218,10 +227,7 @@ def scrape_progress(r: Request):
 
     row = ss_current(user["id"])
     if not row:
-        return HTMLResponse(
-            '<div id="scrape-progress" '
-            'hx-get="/scrape-progress" hx-trigger="every 5s" hx-swap="outerHTML transition:true"></div>'
-        )
+        return HTMLResponse(_SP_IDLE)
 
     status = row.get("status") or ""
     phase = row.get("phase") or status
@@ -343,10 +349,7 @@ def scrape_progress(r: Request):
         )
         resp.headers["HX-Trigger"] = json.dumps({"scrape-failed": json.loads(trigger_detail)})
         return resp
-    return HTMLResponse(
-        '<div id="scrape-progress" '
-        'hx-get="/scrape-progress" hx-trigger="every 5s" hx-swap="outerHTML transition:true"></div>'
-    )
+    return HTMLResponse(_SP_IDLE)
 
 
 def _kill_pid_softly(pid):
@@ -398,11 +401,7 @@ def cancel_queue(qid: int, r: Request):
         return redir
     user = get_user(r)
     cancel_queue_row(qid, user["id"])
-    return HTMLResponse(
-        '<div id="scrape-progress" '
-        'hx-get="/scrape-progress" hx-trigger="every 5s" hx-swap="outerHTML transition:true">'
-        '</div>'
-    )
+    return HTMLResponse(_SP_IDLE)
 
 
 @router.get("/cookies", response_class=HTMLResponse)
