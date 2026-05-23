@@ -245,15 +245,23 @@ def account_page(handle: str, r: Request, days: int = 365):
         '<h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">📊 Efficiency</h3>'
         '<div class="grid grid-cols-3 gap-4 text-center">'
         f'<div><div class="text-lg font-semibold text-emerald-400">{fmt(perf_epv)}</div>'
-        f'<div class="text-[10px] text-gray-400">EPV ×1000</div></div>'
+        f'<div class="text-[10px] text-gray-400">'
+        + tip("EPV ×1000", "Engagement Per View — likes on posts ÷ post views, scaled ×1000. Higher = more engaged audience per impression.", with_icon=False)
+        + '</div></div>'
         f'<div><div class="text-lg font-semibold text-blue-400">{fmt(perf_epf)}</div>'
-        f'<div class="text-[10px] text-gray-400">EPF ×1000</div></div>'
+        f'<div class="text-[10px] text-gray-400">'
+        + tip("EPF ×1000", "Engagement Per Follower — total engagement ÷ followers, scaled ×1000. Higher = follower base is actively engaging.", with_icon=False)
+        + '</div></div>'
         f'<div><div class="text-lg font-semibold text-purple-400">{fmt(perf_quality)}</div>'
-        f'<div class="text-[10px] text-gray-400">Quality (0-100)</div></div>'
+        f'<div class="text-[10px] text-gray-400">'
+        + tip("Quality (0-100)", "AI-scored post quality (0–100). Measures originality, depth, and clarity. Averaged across all posts in the period.", with_icon=False)
+        + '</div></div>'
         '</div>'
         '<div class="flex gap-4 mt-3 pt-3 border-t border-gray-800 text-xs text-gray-400">'
         f'<span>🏆 {fmt(eng_total)} engagement (posts+replies)</span>'
-        f'<span>🔬 {fmt(perf_inorganic)} inorganic</span>'
+        f'<span>'
+        + tip(f"🔬 {fmt(perf_inorganic)} inorganic", "Inorganic score — proxy for bot-like patterns (repetitive phrasing, posting bursts). Lower is better. Near 0 = natural posting.", with_icon=False)
+        + '</span>'
         '</div></div></div>'
     )
     # Vibe bar

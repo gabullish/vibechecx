@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 
 from web.core import q, get_user, require_login, get_active_profile, active_profile_name
-from web.ui import header_html, fmt, rel_time, _cookie_health, cookie_health_pill_html, HF, scrape_depth_picker_html
+from web.ui import header_html, tip, fmt, rel_time, _cookie_health, cookie_health_pill_html, HF, scrape_depth_picker_html
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -278,17 +278,25 @@ def scrape_progress(r: Request):
             '<span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>'
             f'<span class="text-cyan-200 font-medium">{html.escape(_phase_label(phase))}'
             + (f' · @{html.escape(target)}' if target else '') + '</span>'
-            f'<span class="text-cyan-500/80 text-xs">phase {phase_num}/4</span>'
-            f'<span class="ml-auto text-xs text-cyan-500/80">~{eta}s</span>'
+            + tip(f'<span class="text-cyan-500/80 text-xs">phase {phase_num}/4</span>',
+                  "1 = collecting tweets · 2 = capturing engagement metrics · 3 = mining reply threads · 4 = enriching data",
+                  with_icon=False)
+            + f'<span class="ml-auto text-xs text-cyan-500/80">~{eta}s</span>'
             '</div>'
             '<div class="h-1 bg-cyan-950 rounded-full overflow-hidden">'
             f'<div class="h-full bg-cyan-400 transition-all duration-700" style="width:{pct}%"></div>'
             '</div>'
             '<div class="grid grid-cols-3 gap-2 text-[11px] text-cyan-300/70">'
-            f'<div><span class="text-cyan-100 font-mono">{rate}</span> tweets/min</div>'
-            f'<div><span class="text-cyan-100 font-mono">{tweets}</span> collected</div>'
-            f'<div title="seconds since last progress update"><span class="{stall_color} font-mono">{hb_age if hb_age is not None else "—"}{("s" if hb_age is not None else "")}</span> since update</div>'
-            '</div>'
+            + tip(f'<div><span class="text-cyan-100 font-mono">{rate}</span> tweets/min</div>',
+                  "Collection rate — tweets processed per minute. Slows during phase 2 (metric patrol) due to per-tweet API calls.",
+                  with_icon=False)
+            + tip(f'<div><span class="text-cyan-100 font-mono">{tweets}</span> collected</div>',
+                  "Total tweets collected so far in this scrape session.",
+                  with_icon=False)
+            + tip(f'<div><span class="{stall_color} font-mono">{hb_age if hb_age is not None else "—"}{("s" if hb_age is not None else "")}</span> since update</div>',
+                  "Seconds since the last progress heartbeat. Over 30s may indicate the scraper hit a rate-limit or stalled.",
+                  with_icon=False)
+            + '</div>'
             f'<div class="flex justify-end pt-1">{cancel_btn}</div>'
             '</div>'
         )

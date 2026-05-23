@@ -145,7 +145,11 @@ def dash(r: Request, tag: str = "", days: int = 0, sort: str = "likes"):
             f'<div class="bg-gray-900 rounded-xl p-4 border border-gray-800">'
             f'<div class="flex items-center justify-between mb-2">'
             f'<a href="/cohort/{co_id}" class="text-sm font-medium text-emerald-400 hover:underline">{cname}</a>'
-            f'<span class="text-xs font-bold {"text-emerald-400" if cv >= 65 else "text-yellow-400" if cv >= 40 else "text-red-400"}">{cv}/100</span></div>'
+            + '<span class="text-xs font-bold '
+            + ("text-emerald-400" if cv >= 65 else "text-yellow-400" if cv >= 40 else "text-red-400")
+            + '">'
+            + tip(f"{cv}/100", "Cohort Vibe Score — composite 0–100 blending engagement rate, post volume, and reach across all members. Green ≥65, yellow 40–64, red &lt;40.", with_icon=False)
+            + '</span></div>'
             f'<div class="w-full bg-gray-800 rounded-full h-1.5 mb-2 overflow-hidden">'
             f'<div class="{cv_color} h-full rounded-full" style="width:{cv}%"></div></div>'
             f'<div class="text-[10px] text-gray-400">{c["members"]} members</div>'
@@ -185,19 +189,27 @@ def dash(r: Request, tag: str = "", days: int = 0, sort: str = "likes"):
         '<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">'
         f'<div class="bg-gray-900 rounded-xl p-5 border border-gray-800 min-w-0">'
         f'<div class="text-3xl font-bold text-emerald-400" title="{fmt(stats["t"])}">{fmt_compact(stats["t"])}</div>'
-        f'<div class="text-sm text-gray-400 whitespace-normal">Tweets</div>'
+        f'<div class="text-sm text-gray-400 whitespace-normal">'
+        + tip("Tweets", "All posts scraped in this period. Originals = your own content. Replies = threads you joined. Retweets are tracked separately and excluded from most engagement metrics.", with_icon=False)
+        + f'</div>'
         f'<div class="text-xs text-gray-400 mt-1 break-words">{fmt(stats["orig"])} originals · {fmt(stats["re"])} replies · {fmt(stats["rt"])} retweets</div></div>'
         f'<div class="bg-gray-900 rounded-xl p-5 border border-gray-800 min-w-0">'
         f'<div class="text-3xl font-bold text-pink-400" title="{fmt(stats["tl"])}">{fmt_compact(stats["tl"])}</div>'
-        f'<div class="text-sm text-gray-400 whitespace-normal">Earned Likes</div>'
+        f'<div class="text-sm text-gray-400 whitespace-normal">'
+        + tip("Earned Likes", "Likes accumulated on your content during this period, split between original posts and replies. Retweets excluded — you didn't author them.", with_icon=False)
+        + f'</div>'
         f'<div class="text-xs text-gray-400 mt-1 break-words">posts ❤ {fmt(stats["pl"])} · replies ❤ {fmt(stats["rl"])}</div></div>'
         f'<div class="bg-gray-900 rounded-xl p-5 border border-gray-800 min-w-0">'
         f'<div class="text-3xl font-bold text-blue-400" title="{fmt(stats["tv"])}">{fmt_compact(stats["tv"])}</div>'
-        f'<div class="text-sm text-gray-400 whitespace-normal">Total Views</div>'
+        f'<div class="text-sm text-gray-400 whitespace-normal">'
+        + tip("Total Views", "Impressions on your content, split between original posts and replies. Retweets excluded. High views ÷ low likes = reach without resonance.", with_icon=False)
+        + f'</div>'
         f'<div class="text-xs text-gray-400 mt-1 break-words">posts 👁 {fmt(stats["pv"])} · replies 👁 {fmt(stats["rv"])}</div></div>'
         f'<div class="bg-gray-900 rounded-xl p-5 border border-gray-800 min-w-0">'
         f'<div class="text-3xl font-bold text-cyan-400" title="{fmt(stats["mi"])}">{fmt_compact(stats["mi"])}</div>'
-        f'<div class="text-sm text-gray-400 whitespace-normal">Media Items</div></div>'
+        f'<div class="text-sm text-gray-400 whitespace-normal">'
+        + tip("Media Items", "Photos, videos, or GIFs attached to posts. Accounts with rich media typically see significantly higher view counts.", with_icon=False)
+        + f'</div></div>'
         '</div>'
         f'{tag_banner}'
         '<div class="bg-gray-900 rounded-xl border border-gray-800 p-5">'
@@ -510,10 +522,18 @@ def profile_view(r: Request, days: int = 0):
         f"<div class='text-xs text-gray-400'>{'cohort following' if is_cohort else 'following'}</div></div>"
         "</div>"
         "<div class='mt-4 grid grid-cols-2 gap-3 text-center text-sm'>"
-        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-emerald-400' title='{fmt(s['t'])}'>{fmt_compact(s['t'])}</div><div class='text-xs text-gray-400'>total posts</div></div>"
-        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-cyan-400' title='{fmt(s['orig'])}'>{fmt_compact(s['orig'])}</div><div class='text-xs text-gray-400'>originals</div></div>"
-        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-cyan-400' title='{fmt(s['r'])}'>{fmt_compact(s['r'])}</div><div class='text-xs text-gray-400'>replies</div></div>"
-        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-gray-300' title='{fmt(s['rt'])}'>{fmt_compact(s['rt'])}</div><div class='text-xs text-gray-400'>retweets</div></div>"
+        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-emerald-400' title='{fmt(s['t'])}'>{fmt_compact(s['t'])}</div><div class='text-xs text-gray-400'>"
+        + tip("total posts", "All posts in the selected period including originals, replies, and retweets.", with_icon=False)
+        + "</div></div>"
+        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-cyan-400' title='{fmt(s['orig'])}'>{fmt_compact(s['orig'])}</div><div class='text-xs text-gray-400'>"
+        + tip("originals", "Tweets you authored — not replies to others and not retweets. Your original content output.", with_icon=False)
+        + "</div></div>"
+        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-cyan-400' title='{fmt(s['r'])}'>{fmt_compact(s['r'])}</div><div class='text-xs text-gray-400'>"
+        + tip("replies", "Replies you sent to other users. High reply volume = active community engagement.", with_icon=False)
+        + "</div></div>"
+        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-gray-300' title='{fmt(s['rt'])}'>{fmt_compact(s['rt'])}</div><div class='text-xs text-gray-400'>"
+        + tip("retweets", "Content you shared. Excluded from engagement metrics since you didn't author it.", with_icon=False)
+        + "</div></div>"
         "</div></div>"
         "<div class='bg-gray-900 rounded-xl p-6 border border-gray-800'>"
         "<h2 class='text-lg font-semibold mb-4'>Likes</h2>"
