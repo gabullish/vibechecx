@@ -389,10 +389,8 @@ def tags(r: Request, days: int = 0):
 
 
 @router.get("/leaderboard", response_class=HTMLResponse)
-def leaderboard(r: Request, days: int = 0, sort: str = "composite", dir: str = "desc"):
-    """Standalone leaderboard page for the active cohort profile."""
-    from web.routes.cohorts import _leaderboard_query as lbq, _LEADERBOARD_SORT_COLS
-
+def leaderboard(r: Request, days: int = 0, sort: str = "composite", dir: str = "desc", combo: str = ""):
+    """Standalone leaderboard page — delegates rendering to the cohort fragment endpoint."""
     user, prof_or_resp = _require_profile(r)
     if not user:
         return prof_or_resp
@@ -414,118 +412,15 @@ def leaderboard(r: Request, days: int = 0, sort: str = "composite", dir: str = "
             '</div>'
         ) + HF
 
-    ip = f"{days}d" if days else "7d"
-    period_str = f"Past {('24h' if days == 1 else f'{days}d')}" if days else "All time"
-    if dir not in ("asc", "desc"):
-        dir = "desc"
+    period = f"{days}d" if days else "7d"
+    combo_param = f"&combo={combo}" if combo else ""
+    fragment_url = f"/cohort/{cohort_id}/leaderboard?period={period}&sort={sort}&dir={dir}{combo_param}"
 
-    lb = lbq(cohort_id, ip)
-    asc = dir == "asc"
-    if sort in _LEADERBOARD_SORT_COLS:
-        def _k(row):
-            if sort == "followers":
-                v = row.get("followers_count")
-            elif sort == "engagement_rate":
-                v = row.get("engagement_rate")
-            else:
-                v = row.get(sort)
-            return (v if v is not None else -1)
-        lb = sorted(lb, key=_k, reverse=not asc)
-
-    def _pb(p):
-        cls = "bg-emerald-700 text-white" if p == ip else "bg-gray-800 text-gray-400 hover:text-white"
-        d = {"24h": 1, "7d": 7, "14d": 14, "30d": 30}.get(p, 0)
-        return f'<a href="/leaderboard?days={d}&sort={sort}&dir={dir}" class="px-2.5 py-1 rounded text-xs transition {cls}">{p}</a>'
-
-    period_seg = "".join(_pb(p) for p in ("24h", "7d", "14d", "30d"))
-
-    def _cell(value, fmt_str="{:.2f}", suffix=""):
-        if value is None:
-            return '<td class="py-2 px-2 text-right text-gray-500 text-xs">—</td>'
-        try:
-            formatted = fmt_str.format(value) + suffix
-        except (ValueError, TypeError):
-            formatted = str(value) + suffix
-        return f'<td class="py-2 px-2 text-right text-sm text-gray-200">{formatted}</td>'
-
-    def _sort_link(key, label):
-        is_active = sort == key
-        if is_active:
-            next_dir = "asc" if dir == "desc" else "desc"
-            glyph = " ▲" if dir == "asc" else " ▼"
-        else:
-            next_dir = "desc"
-            glyph = ""
-        cls = "text-emerald-400" if is_active else "text-gray-500 hover:text-emerald-400"
-        return (
-            f'<a href="/leaderboard?days={days}&sort={key}&dir={next_dir}" '
-            f'class="cursor-pointer select-none {cls}">{label}{glyph}</a>'
-        )
-
-    rows_html = ""
-    for i, row in enumerate(lb, 1):
-        avatar = row.get("avatar_url") or ""
-        avatar_html = (
-            f'<img src="{html.escape(avatar)}" class="w-7 h-7 rounded-full bg-gray-700 object-cover flex-shrink-0" '
-            'onerror="this.style.display=\'none\'" loading="lazy">'
-        )
-        rows_html += (
-            '<tr class="border-b border-gray-800 hover:bg-gray-800/40 cursor-pointer transition" '
-            f"onclick=\"window.location='/account/{html.escape(row['username'])}'\">"
-            f'<td class="py-2 px-2 text-center text-xs text-gray-500">#{i}</td>'
-            f'<td class="py-2 px-2"><div class="flex items-center gap-2">{avatar_html}'
-            f'<a href="/account/{html.escape(row["username"])}" class="text-emerald-400 hover:underline text-sm font-medium">'
-            f'@{html.escape(row["username"])}</a></div></td>'
-            + _cell(row.get("composite"), "{:.3f}")
-            + _cell(
-                (row.get("engagement_rate") or 0) * 100 if row.get("engagement_rate") is not None else None,
-                "{:.2f}", suffix="%",
-              )
-            + _cell(row.get("voice_share"), "{:.1f}", suffix="%")
-            + _cell(row.get("likes"), "{:,}")
-            + _cell(row.get("views"), "{:,}")
-            + _cell(row.get("likes_per_post"), "{:.0f}")
-            + _cell(row.get("views_per_post"), "{:,.0f}")
-            + _cell(
-                (row.get("reply_ratio") or 0) * 100 if row.get("reply_ratio") is not None else None,
-                "{:.0f}", suffix="%",
-              )
-            + _cell(row.get("posts"), "{:d}")
-            + _cell(row.get("followers_count"), "{:d}")
-            + '</tr>'
-        )
-
-    no_data = not lb
     return header_html(days, prof.get("name", ""), is_admin=user.get("is_admin", False)) + (
-        '<div class="flex items-center justify-between mb-4">'
-        '<h1 class="text-lg font-semibold">Leaderboard</h1>'
-        f'<div class="text-xs text-gray-500">{period_str} · {len(lb)} members</div>'
+        f'<div id="tab-leaderboard" '
+        f'hx-get="{fragment_url}" hx-trigger="load" hx-swap="outerHTML transition:true">'
+        '<div class="text-center py-12 text-gray-500 text-sm">Loading…</div>'
         '</div>'
-        f'<div class="inline-flex rounded-lg bg-gray-900 border border-gray-800 p-0.5 mb-4">{period_seg}</div>'
-        + (
-            '<div class="text-center py-12 bg-gray-900 rounded-xl border border-gray-800">'
-            '<div class="text-4xl mb-2 opacity-40">📊</div>'
-            '<p class="text-gray-400 text-sm">No data for this period.</p></div>'
-            if no_data else
-            '<div class="overflow-x-auto rounded-lg border border-gray-800">'
-            '<table class="w-full text-sm table-auto">'
-            '<thead class="bg-gray-900/80">'
-            '<tr class="text-[11px] text-gray-500 uppercase tracking-wider border-b border-gray-800">'
-            '<th class="py-2 px-2 text-center">#</th>'
-            '<th class="py-2 px-2 text-left">Account</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("composite", "Composite")}</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("engagement_rate", "Eng rate")}</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("voice_share", "Voice %")}</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("likes", "Likes")}</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("views", "Views")}</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("likes_per_post", "Likes/post")}</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("views_per_post", "Views/post")}</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("reply_ratio", "Reply %")}</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("posts", "Posts")}</th>'
-            f'<th class="py-2 px-2 text-right">{_sort_link("followers_count", "Followers")}</th>'
-            '</tr></thead>'
-            f'<tbody>{rows_html}</tbody></table></div>'
-        )
     ) + HF
 
 
