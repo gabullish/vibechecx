@@ -773,9 +773,10 @@ def cohort_leaderboard(
         "reach_per_follower": max((row.get("reach_per_follower") or -1) for row in lb),
     }
 
-    def _cell(value, key, fmt_str="{:.2f}", suffix=""):
+    def _cell(value, key, fmt_str="{:.2f}", suffix="", bl=False):
+        border = " border-l border-gray-800" if bl else ""
         if value is None:
-            return '<td class="py-2 px-2 text-right text-gray-500 text-xs">—</td>'
+            return f'<td class="py-1 px-2 text-right text-gray-500 text-xs{border}">—</td>'
         is_top = (value == top_by.get(key)) and (value is not None) and (value != -1)
         accent = ('<span class="absolute left-0 top-1 bottom-1 w-0.5 bg-emerald-400 rounded"></span>'
                   if is_top else '')
@@ -783,7 +784,7 @@ def cohort_leaderboard(
             formatted = fmt_str.format(value) + suffix
         except (ValueError, TypeError):
             formatted = str(value) + suffix
-        return f'<td class="py-2 px-2 text-right relative text-sm text-gray-200">{accent}{formatted}</td>'
+        return f'<td class="py-1 px-2 text-right relative text-sm text-gray-200{border}">{accent}{formatted}</td>'
 
     rows_html = ""
     for i, row in enumerate(lb, 1):
@@ -797,12 +798,12 @@ def cohort_leaderboard(
         sentiment_color = "text-emerald-400" if (row.get("engagement_rate") or 0) > 0.02 else "text-gray-400"
         combo_badge = ""
         if sort == "combo" and "_combo_score" in row:
-            combo_badge = f'<td class="py-2 px-2 text-right text-xs text-purple-400">{row["_combo_score"]:.3f}</td>'
+            combo_badge = f'<td class="py-1 px-1.5 text-right text-xs text-purple-400">{row["_combo_score"]:.3f}</td>'
         rows_html += (
             '<tr class="border-b border-gray-800 hover:bg-gray-800/40 cursor-pointer transition" '
             f"onclick=\"window.location='/account/{html.escape(row['username'])}'\">"
-            f'<td class="py-2 px-2 text-center text-xs text-gray-500">#{i}</td>'
-            f'<td class="py-2 px-2"><div class="flex items-center gap-2">{avatar_html}'
+            f'<td class="py-1 px-1.5 text-center text-xs text-gray-500">#{i}</td>'
+            f'<td class="py-1 px-2"><div class="flex items-center gap-2">{avatar_html}'
             f'<a href="/account/{html.escape(row["username"])}" class="text-emerald-400 hover:underline text-sm font-medium">'
             f'@{html.escape(row["username"])}</a></div></td>'
             + (combo_badge if sort == "combo" else "")
@@ -812,18 +813,18 @@ def cohort_leaderboard(
                 "engagement_rate", "{:.2f}", suffix="%",
               )
             + _cell(row.get("voice_share"), "voice_share", "{:.1f}", suffix="%")
-            + _cell(row.get("likes"), "likes", "{:,}")
+            + _cell(row.get("likes"), "likes", "{:,}", bl=True)
             + _cell(row.get("views"), "views", "{:,}")
-            + _cell(row.get("likes_per_post"), "likes_per_post", "{:.0f}")
+            + _cell(row.get("likes_per_post"), "likes_per_post", "{:.0f}", bl=True)
             + _cell(row.get("views_per_post"), "views_per_post", "{:,.0f}")
             + _cell(
                 (row.get("reply_ratio") or 0) * 100 if row.get("reply_ratio") is not None else None,
                 "reply_ratio", "{:.0f}", suffix="%",
               )
-            + f'<td class="py-2 px-2 text-center {sentiment_color}">{spark_html}</td>'
+            + f'<td class="py-1 px-2 text-center {sentiment_color}">{spark_html}</td>'
             + _cell(row.get("posts"), "posts", "{:d}")
             + _cell(row.get("followers_count"), "followers_count", "{:d}")
-            + _cell(row.get("amplification_rate"), "amplification_rate", "{:.2f}")
+            + _cell(row.get("amplification_rate"), "amplification_rate", "{:.2f}", bl=True)
             + _cell(row.get("conversation_rate"), "conversation_rate", "{:.2f}")
             + _cell(row.get("reach_per_follower"), "reach_per_follower", "{:.1f}")
             + '</tr>'
@@ -840,31 +841,34 @@ def cohort_leaderboard(
 
     def _sort_link(key, label, tooltip_text=""):
         is_active = sort == key
-        if is_active:
-            next_dir = "asc" if dir == "desc" else "desc"
-            glyph = " ▲" if dir == "asc" else " ▼"
-        else:
-            next_dir = "desc"
-            glyph = ""
-        cls = "text-emerald-400" if is_active else "text-gray-500 hover:text-emerald-400"
+        next_dir = ("asc" if dir == "desc" else "desc") if is_active else "desc"
+        glyph = ("▲" if dir == "asc" else "▼") if is_active else ""
+        label_cls = "text-emerald-400" if is_active else "text-gray-400 hover:text-emerald-300"
         label_html = tip(label, tooltip_text) if tooltip_text else label
-        # Magnet toggle (only for sortable metrics, not combo itself)
+        sort_a = (
+            f'<a hx-get="/cohort/{cid}/leaderboard?period={period}&sort={key}&dir={next_dir}&combo={combo_str}" '
+            f'hx-target="#tab-leaderboard" hx-swap="outerHTML transition:true" '
+            f'class="flex items-center gap-0.5 cursor-pointer select-none {label_cls} whitespace-nowrap">'
+            f'{label_html}'
+            + (f'<span class="text-[8px] opacity-50 ml-0.5">{glyph}</span>' if glyph else '')
+            + '</a>'
+        )
         magnet_html = ""
         if key in _COMBO_ROW_KEY:
             in_combo = key in combo_metrics
             new_combo = _toggle_combo(key)
-            magnet_cls = "text-purple-400 ml-0.5" if in_combo else "text-gray-700 hover:text-purple-400 ml-0.5"
+            magnet_cls = "text-purple-400" if in_combo else "text-gray-700 hover:text-purple-400"
             magnet_html = (
                 f'<a hx-get="/cohort/{cid}/leaderboard?period={period}&sort={sort}&dir={dir}&combo={new_combo}" '
                 f'hx-target="#tab-leaderboard" hx-swap="outerHTML transition:true" '
-                f'class="cursor-pointer select-none {magnet_cls}" title="Toggle in combo">🧲</a>'
+                f'class="cursor-pointer select-none {magnet_cls} text-[11px] leading-none" '
+                f'title="Add/remove from combo rank">🧲</a>'
             )
         return (
-            f'<span class="inline-flex items-center gap-0.5">'
-            f'<a hx-get="/cohort/{cid}/leaderboard?period={period}&sort={key}&dir={next_dir}&combo={combo_str}" '
-            f'hx-target="#tab-leaderboard" hx-swap="outerHTML transition:true" '
-            f'class="cursor-pointer select-none {cls}">{label_html}{glyph}</a>'
-            f'{magnet_html}</span>'
+            f'<div class="flex flex-col items-end gap-px">'
+            f'{sort_a}'
+            + (f'{magnet_html}' if magnet_html else '')
+            + '</div>'
         )
 
     def _period_button(p):
@@ -937,7 +941,7 @@ def cohort_leaderboard(
     rpf_tip = "Total views divided by follower count. Reach relative to audience size."
 
     combo_header = (
-        '<th class="py-2 px-2 text-right text-purple-400">Score</th>'
+        '<th class="py-1 px-1.5 text-right align-top text-purple-400">Combo</th>'
         if sort == "combo" else ""
     )
 
@@ -967,24 +971,24 @@ def cohort_leaderboard(
         '<table class="w-full text-sm table-auto">'
         '<thead class="bg-gray-900/80">'
         f'<tr>{grp_lead}{grp_abs}{grp_prop}{grp_trail}{grp_formula}</tr>'
-        '<tr class="text-[11px] text-gray-500 uppercase tracking-wider border-b border-gray-800">'
-        '<th class="py-2 px-2 text-center">#</th>'
-        '<th class="py-2 px-2 text-left">Account</th>'
+        '<tr class="text-[10px] text-gray-500 uppercase tracking-wider border-b border-gray-800">'
+        '<th class="py-1 px-1.5 text-center align-top">#</th>'
+        '<th class="py-1 px-2 text-left align-top">Account</th>'
         f'{combo_header}'
-        f'<th class="py-2 px-2 text-right">{_sort_link("composite", "Composite", composite_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("engagement_rate", "Eng rate", eng_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("voice_share", "Voice %", voice_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("likes", "Likes", likes_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("views", "Views", views_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("likes_per_post", "Likes/post", lpp_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("views_per_post", "Views/post", vpp_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("reply_ratio", "Reply %", reply_tip)}</th>'
-        '<th class="py-2 px-2 text-center text-gray-500">7d</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("posts", "Posts", posts_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("followers", "Followers", followers_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("amplification_rate", "Amplify", amp_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("conversation_rate", "Conv rate", conv_tip)}</th>'
-        f'<th class="py-2 px-2 text-right">{_sort_link("reach_per_follower", "Reach/flwr", rpf_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("composite", "Score", composite_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("engagement_rate", "Eng%", eng_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("voice_share", "Voice%", voice_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top border-l border-gray-700">{_sort_link("likes", "Likes", likes_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("views", "Views", views_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top border-l border-gray-700">{_sort_link("likes_per_post", "Lk/p", lpp_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("views_per_post", "Vw/p", vpp_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("reply_ratio", "Reply%", reply_tip)}</th>'
+        '<th class="py-1 px-1.5 text-center align-top text-gray-500">7d</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("posts", "Posts", posts_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("followers", "Fwrs", followers_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top border-l border-gray-700">{_sort_link("amplification_rate", "Amp", amp_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("conversation_rate", "Conv%", conv_tip)}</th>'
+        f'<th class="py-1 px-1.5 text-right align-top">{_sort_link("reach_per_follower", "Reach", rpf_tip)}</th>'
         '</tr></thead>'
         f'<tbody>{rows_html}</tbody></table></div></div>'
     )

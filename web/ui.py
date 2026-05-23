@@ -38,6 +38,25 @@ def header_html(days=0, active_name="", is_admin=False, show_insights=True):
         '<script src="https://cdn.tailwindcss.com"></script>'
         '<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>'
         '<script>document.addEventListener("htmx:afterSwap",function(e){window.Alpine&&Alpine.initTree(e.detail.elt)})</script>'
+        # Tooltip positioner — repositions .tip-body to position:fixed coords on mouseenter
+        # so it always escapes overflow containers and table stacking contexts.
+        '<script>(function(){'
+        'function pos(e){'
+        'var t=e.target.closest&&e.target.closest(".tip");if(!t)return;'
+        'var b=t.querySelector(".tip-body");if(!b)return;'
+        'var r=t.getBoundingClientRect();'
+        'var cx=Math.round(r.left+r.width/2);'
+        # Clamp horizontally so tooltip stays within viewport
+        'var hw=Math.min(140,window.innerWidth/2-8);'
+        'cx=Math.max(hw,Math.min(window.innerWidth-hw,cx));'
+        # Show above by default; flip below when near the top
+        'var above=r.top>120;'
+        'b.style.left=cx+"px";'
+        'b.style.top=(above?Math.round(r.top-8):Math.round(r.bottom+8))+"px";'
+        'b.style.transform=above?"translate(-50%,-100%)":"translate(-50%,0)";'
+        '}'
+        'document.addEventListener("mouseenter",pos,true);'
+        '})()</script>'
         '<style>[x-cloak]{display:none!important}'
         # Legacy short-tip class (data-tip attribute, single-line). Kept for
         # backwards compat with spots that use title= or data-tip=.
@@ -57,16 +76,17 @@ def header_html(days=0, active_name="", is_admin=False, show_insights=True):
         'width:13px;height:13px;border-radius:50%;background:rgba(75,85,99,.4);'
         'color:rgba(209,213,219,.7);font-size:9px;font-weight:600;line-height:1;margin-left:2px;flex-shrink:0}'
         '.tip:hover>.tip-body,.tip:focus>.tip-body,.tip:focus-within>.tip-body{'
-        'opacity:1;visibility:visible;pointer-events:auto;transform:translateX(-50%) translateY(-2px)}'
-        '.tip-body{position:absolute;bottom:calc(100% + 4px);left:50%;'
-        'transform:translateX(-50%) translateY(4px);width:max-content;max-width:280px;'
+        'opacity:1;visibility:visible;pointer-events:auto}'
+        # position:fixed escapes overflow-x:auto table containers and all stacking contexts.
+        # JS in the page script sets left/top on mouseenter so it appears above the trigger.
+        '.tip-body{position:fixed;left:0;top:0;'
+        'transform:translate(-50%,-108%);'
+        'width:max-content;max-width:280px;'
         'padding:8px 10px;background:#030712;color:#e5e7eb;font-size:11px;line-height:1.5;'
         'text-align:left;border:1px solid #374151;border-radius:6px;'
-        'box-shadow:0 4px 14px rgba(0,0,0,.5);z-index:60;'
+        'box-shadow:0 4px 20px rgba(0,0,0,.7);z-index:9999;'
         'opacity:0;visibility:hidden;pointer-events:none;'
-        'transition:opacity .15s,visibility .15s,transform .15s;white-space:normal;font-weight:400}'
-        '.tip-body::after{content:"";position:absolute;top:100%;left:50%;'
-        'transform:translateX(-50%);border:5px solid transparent;border-top-color:#374151}'
+        'transition:opacity .12s,visibility .12s;white-space:normal;font-weight:400}'
         '.tip-body strong{color:#fff;font-weight:600}'
         '.tip-body code{background:rgba(31,41,55,.7);padding:1px 5px;border-radius:3px;'
         'font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}'
