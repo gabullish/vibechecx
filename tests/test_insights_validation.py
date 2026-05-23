@@ -106,6 +106,7 @@ def test_generate_insights_retries_on_hallucination(db, make_user, monkeypatch):
     ])
     monkeypatch.setattr(vi, "make_grok", lambda: fake)
     monkeypatch.setattr(vi, "make_deepseek", lambda: None)
+    monkeypatch.setattr(vi, "make_openai", lambda: None)
 
     insights, provider = vi.generate_insights("cohort", cid, "30d")
     assert insights is not None
@@ -141,6 +142,7 @@ def test_generate_insights_persists_warnings_when_retry_also_bad(db, make_user, 
     ])
     monkeypatch.setattr(vi, "make_grok", lambda: fake)
     monkeypatch.setattr(vi, "make_deepseek", lambda: None)
+    monkeypatch.setattr(vi, "make_openai", lambda: None)
 
     insights, provider = vi.generate_insights("cohort", cid, "30d")
     assert insights is not None, "should still return cleaned insights, not None"

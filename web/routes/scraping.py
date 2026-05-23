@@ -154,10 +154,9 @@ async def trigger_scrape(r: Request):
     # Immediately return a polling shell — /scrape-progress will show queue
     # position if pending, or live progress once the worker starts it.
     return HTMLResponse(
-        '<div id="scrape-progress" '
+        '<div id="scrape-progress" class="fixed top-14 right-4 z-50 w-80 pointer-events-none" '
         'hx-get="/scrape-progress" hx-trigger="load delay:300ms, every 3s" '
-        'hx-swap="outerHTML transition:true" '
-        'class="mt-4 mx-6"></div>'
+        'hx-swap="outerHTML transition:true"></div>'
     )
 
 
@@ -202,7 +201,8 @@ def scrape_progress(r: Request):
         )
         return HTMLResponse(
             '<div id="scrape-progress" '
-            'class="mt-4 rounded-xl border border-gray-700 bg-gray-900/60 p-4 mx-6" '
+            'class="fixed top-14 right-4 z-50 w-80 pointer-events-auto '
+            'rounded-xl border border-gray-700 bg-gray-900/95 p-4 shadow-xl" '
             'hx-get="/scrape-progress" hx-trigger="every 5s" hx-swap="outerHTML transition:true">'
             '<div class="flex items-center gap-3 text-sm">'
             '<span class="text-2xl font-bold text-gray-300 leading-none tabular-nums">'
@@ -265,7 +265,7 @@ def scrape_progress(r: Request):
             4 if phase == "enriching" else 1
         )
         return HTMLResponse(
-            f'<div id="scrape-progress" class="mt-4 rounded-xl border {card_border} {card_bg} p-4 space-y-2 mx-6" '
+            f'<div id="scrape-progress" class="fixed top-14 right-4 z-50 w-80 pointer-events-auto rounded-xl border {card_border} {card_bg} p-4 space-y-2 shadow-xl" '
             'hx-get="/scrape-progress" hx-trigger="every 2s" hx-swap="outerHTML transition:true">'
             f'{stall_banner}'
             '<div class="flex items-center gap-3 text-sm">'
@@ -308,13 +308,14 @@ def scrape_progress(r: Request):
         })
         resp = HTMLResponse(
             '<div id="scrape-progress" '
-            'class="flex items-center gap-2 text-xs bg-emerald-900/30 border border-emerald-800 '
-            'rounded-lg px-3 py-2 mx-6 mt-2">'
-            '<div class="inline-block w-2 h-2 rounded-full bg-emerald-400"></div>'
+            'class="fixed top-14 right-4 z-50 w-80 pointer-events-auto '
+            'flex items-center gap-2 text-xs bg-emerald-900/80 border border-emerald-700 '
+            'rounded-xl px-3 py-2.5 shadow-xl">'
+            '<div class="inline-block w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0"></div>'
             f'<span class="text-emerald-300 font-medium">Done · {tweets} tweets</span>'
-            f'<span class="text-gray-500 flex-1">{html.escape(target)}</span>'
-            f'<button onclick="this.closest(\'#scrape-progress\').remove()" '
-            f'class="text-gray-400 hover:text-gray-300 leading-none text-base px-1">×</button>'
+            f'<span class="text-gray-500 flex-1 truncate">{html.escape(target)}</span>'
+            f'<button onclick="this.closest(\'[id=scrape-progress]\').remove()" '
+            f'class="text-gray-400 hover:text-gray-300 leading-none text-base px-1 flex-shrink-0">×</button>'
             '</div>'
         )
         resp.headers["HX-Trigger"] = json.dumps({"scrape-complete": json.loads(trigger_detail)})
@@ -328,15 +329,16 @@ def scrape_progress(r: Request):
         sid = row.get("id", "")
         resp = HTMLResponse(
             f'<div id="scrape-progress" '
-            f'class="flex items-center gap-2 text-xs bg-red-900/30 border border-red-800 '
-            f'rounded-lg px-3 py-2 mx-6 mt-2"'
+            f'class="fixed top-14 right-4 z-50 w-80 pointer-events-auto '
+            f'flex items-center gap-2 text-xs bg-red-900/80 border border-red-700 '
+            f'rounded-xl px-3 py-2.5 shadow-xl" '
             f'x-data x-init="setTimeout(()=>$el.remove(),8000)">'
-            f'<div class="inline-block w-2 h-2 rounded-full bg-red-400"></div>'
-            f'<span class="text-red-300 font-medium">Failed</span>'
-            f'<span class="text-gray-400 flex-1">{html.escape(err)}</span>'
-            f'<a href="/scrapes" class="text-gray-500 hover:text-gray-300 text-[10px] mr-1">log</a>'
-            f'<button onclick="this.closest(\'#scrape-progress\').remove()" '
-            f'class="text-gray-400 hover:text-gray-300 leading-none text-base px-1">×</button>'
+            f'<div class="inline-block w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></div>'
+            f'<span class="text-red-300 font-medium flex-shrink-0">Failed</span>'
+            f'<span class="text-gray-400 flex-1 truncate text-[10px]">{html.escape(err)}</span>'
+            f'<a href="/scrapes" class="text-gray-500 hover:text-gray-300 text-[10px] mr-1 flex-shrink-0">log</a>'
+            f'<button onclick="this.closest(\'[id=scrape-progress]\').remove()" '
+            f'class="text-gray-400 hover:text-gray-300 leading-none text-base px-1 flex-shrink-0">×</button>'
             f'</div>'
         )
         resp.headers["HX-Trigger"] = json.dumps({"scrape-failed": json.loads(trigger_detail)})
@@ -381,8 +383,9 @@ def cancel_scrape(sid: int, r: Request):
     )
     return (
         '<div id="scrape-progress" '
-        'class="flex items-center gap-2 text-xs bg-gray-800 border border-gray-700 '
-        'rounded-lg px-3 py-2 mx-6 mt-2" '
+        'class="fixed top-14 right-4 z-50 w-80 pointer-events-auto '
+        'flex items-center gap-2 text-xs bg-gray-800/90 border border-gray-700 '
+        'rounded-xl px-3 py-2.5 shadow-xl" '
         'hx-get="/scrape-progress" hx-trigger="every 5s" hx-swap="outerHTML transition:true">'
         '<span class="text-gray-400">Cancelled.</span></div>'
     )

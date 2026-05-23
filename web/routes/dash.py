@@ -615,7 +615,7 @@ def profile_view(r: Request, days: int = 0):
         f"<div class='text-xs text-gray-400'>{'cohort following' if is_cohort else 'following'}</div></div>"
         "</div>"
         "<div class='mt-4 grid grid-cols-2 gap-3 text-center text-sm'>"
-        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-emerald-400' title='{fmt(s['t'])}'>{fmt_compact(s['t'])}</div><div class='text-xs text-gray-400'>total</div></div>"
+        f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-emerald-400' title='{fmt(s['t'])}'>{fmt_compact(s['t'])}</div><div class='text-xs text-gray-400'>total posts</div></div>"
         f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-cyan-400' title='{fmt(s['orig'])}'>{fmt_compact(s['orig'])}</div><div class='text-xs text-gray-400'>originals</div></div>"
         f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-cyan-400' title='{fmt(s['r'])}'>{fmt_compact(s['r'])}</div><div class='text-xs text-gray-400'>replies</div></div>"
         f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-gray-300' title='{fmt(s['rt'])}'>{fmt_compact(s['rt'])}</div><div class='text-xs text-gray-400'>retweets</div></div>"
@@ -637,6 +637,13 @@ def profile_view(r: Request, days: int = 0):
         f"<div class='w-full bg-gray-800 rounded-full h-2 mt-1'><div class='bg-blue-500 h-2 rounded-full' style='width:{rv_pct:.1f}%'></div></div></div>"
         f"<div class='text-center text-2xl font-bold text-blue-400 mt-4 whitespace-nowrap'>👁 {fmt(s['tv'])}</div></div></div>"
         "</div>"
+        "<div class='mt-6 bg-gray-900 rounded-xl border border-gray-800 p-5'>"
+        "<div class='flex items-center justify-between mb-3'>"
+        "<h2 class='text-sm font-semibold text-gray-300'>Past Insights</h2>"
+        "</div>"
+        "<div hx-get='/insights/library' hx-trigger='load' hx-swap='innerHTML'>"
+        "<p class='text-gray-500 text-xs text-center py-4'>Loading…</p>"
+        "</div></div>"
     ) + HF
 
 

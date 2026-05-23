@@ -58,11 +58,12 @@ def _create_cohort_with_members(user_id, handle, all_members, selected_usernames
     """Single source of truth for cohort+members+profile insertion."""
     name = cohort_name or f"@{handle}"
     slug = slug or f"{handle}_{user_id}"
+    seed = handle.lower().lstrip("@") if handle else ""
     rows = q(
-        "INSERT INTO cohorts(name, slug, brand_keywords, user_id, pfp_url) "
-        "VALUES(%s, %s, %s, %s, %s) "
-        "ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name RETURNING id",
-        (name, slug, json.dumps([handle]), user_id, seed_avatar),
+        "INSERT INTO cohorts(name, slug, brand_keywords, user_id, pfp_url, seed_handle, is_public) "
+        "VALUES(%s, %s, %s, %s, %s, %s, TRUE) "
+        "ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name, is_public=TRUE RETURNING id",
+        (name, slug, json.dumps([handle]), user_id, seed_avatar, seed),
     )
     cid = rows[0]["id"]
     by_name = {m["username"].lower(): m for m in all_members}
@@ -129,6 +130,32 @@ def disc(r: Request, step: int = 1, error: str = ""):
     )
     suggest = r.query_params.get("suggest", "")
     if step == 1:
+        # Library chips — show public cohorts at the bottom of the discover page
+        lib_rows = q(
+            "SELECT c.id, c.name, c.pfp_url, c.seed_handle, COUNT(cm.account_id) AS mc "
+            "FROM cohorts c JOIN cohort_members cm ON cm.cohort_id=c.id "
+            "WHERE c.is_public=TRUE AND c.seed_handle IS NOT NULL "
+            "GROUP BY c.id ORDER BY mc DESC LIMIT 12"
+        )
+        lib_chips = ""
+        if lib_rows:
+            chips = "".join(
+                f'<button hx-post="/discover/start" hx-target="#disc-result" hx-swap="innerHTML" '
+                f'hx-vals=\'{{"handle":"{html.escape(lr["seed_handle"])}"}}\' '
+                'class="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 '
+                'hover:border-emerald-500/40 rounded-lg px-3 py-2 text-xs transition text-left">'
+                + (f'<img src="{html.escape(lr["pfp_url"])}" class="w-5 h-5 rounded-full bg-gray-700 shrink-0" onerror="this.style.display=\'none\'">' if lr.get("pfp_url") else '')
+                + f'<span class="text-emerald-400">@{html.escape(lr["seed_handle"])}</span>'
+                f'<span class="text-gray-500">{lr["mc"]}m</span></button>'
+                for lr in lib_rows
+            )
+            lib_chips = (
+                '<div class="mt-8 pt-6 border-t border-gray-800">'
+                '<p class="text-xs text-gray-500 mb-3">Already in the library — use instantly:</p>'
+                f'<div class="flex flex-wrap gap-2">{chips}</div>'
+                '</div>'
+            )
+
         if suggest:
             h = suggest.lstrip("@")
             return header_html(0) + (
@@ -140,6 +167,7 @@ def disc(r: Request, step: int = 1, error: str = ""):
                 'class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm">'
                 '<button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-6 py-2.5 text-sm font-medium">Discover</button>'
                 '</form><div id="disc-result"></div>'
+                f'{lib_chips}'
                 '<script>setTimeout(function(){document.getElementById("suggest-form").querySelector("button").click()},200)</script>'
             ) + HF
         return header_html(0) + (
@@ -153,10 +181,122 @@ def disc(r: Request, step: int = 1, error: str = ""):
             "<button type='submit' class='bg-emerald-600 hover:bg-emerald-500 text-white "
             "rounded-lg px-6 py-2.5 text-sm font-medium'>Discover</button></form>"
             "<div id='disc-result'></div>"
+            f"{lib_chips}"
         ) + HF
     return header_html(0) + (
         f"<div class='text-center py-12'><p class='text-gray-500'>{html.escape(error or 'Unknown step')}</p></div>"
     ) + HF
+
+
+def _library_match_card(lib, handle):
+    """HTML card shown when a public cohort already exists for this handle."""
+    mc = lib["member_count"]
+    pfp = html.escape(lib.get("pfp_url") or "")
+    name = html.escape(lib["name"])
+    cid = lib["id"]
+    pfp_img = (
+        f'<img src="{pfp}" class="w-10 h-10 rounded-full bg-gray-700 object-cover mr-3 shrink-0" '
+        'onerror="this.style.display=\'none\'" loading="lazy">'
+        if pfp else ""
+    )
+    return (
+        '<div class="mt-6 bg-gray-900 rounded-xl border border-emerald-800/50 p-5">'
+        '<div class="flex items-center mb-3">'
+        f'{pfp_img}'
+        '<div>'
+        '<div class="text-emerald-400 font-semibold text-sm">Found in cohort library</div>'
+        f'<div class="text-white font-medium">{name}</div>'
+        f'<div class="text-xs text-gray-400">{mc} members already scraped</div>'
+        '</div></div>'
+        '<p class="text-xs text-gray-400 mb-4">'
+        f'Someone already built and scraped a cohort for @{html.escape(handle)}. '
+        'You can use it instantly — no wait, no scrape needed. '
+        'Once added you can rename it, add or remove members freely.</p>'
+        '<div class="flex gap-3 flex-wrap">'
+        f'<button hx-post="/cohort-library/fork/{cid}" hx-target="#disc-result" hx-swap="innerHTML" '
+        'class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-5 py-2 text-sm font-medium">'
+        'Use from library (instant)</button>'
+        f'<button hx-post="/discover/start" hx-target="#disc-result" hx-swap="innerHTML" '
+        f'hx-vals=\'{{\"handle\":\"{html.escape(handle)}\",\"force\":\"1\"}}\' '
+        'class="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 '
+        'rounded-lg px-4 py-2 transition">'
+        'Scan fresh instead</button>'
+        '</div></div>'
+    )
+
+
+def _fork_cohort(source_cid: int, user_id: int):
+    """Clone a public library cohort's members into a new cohort for user_id.
+
+    Idempotent: forking the same source twice returns the same cohort+profile.
+    """
+    source = q(
+        "SELECT c.*, COUNT(cm.account_id) AS member_count "
+        "FROM cohorts c JOIN cohort_members cm ON cm.cohort_id=c.id "
+        "WHERE c.id=%s AND c.is_public=TRUE GROUP BY c.id",
+        (source_cid,),
+    )
+    if not source:
+        return None, None
+    src = source[0]
+    seed = (src.get("seed_handle") or "").lower()
+    slug = f"{seed}_{user_id}" if seed else f"fork_{source_cid}_{user_id}"
+
+    rows = q(
+        "INSERT INTO cohorts(user_id, name, slug, pfp_url, seed_handle) "
+        "VALUES(%s, %s, %s, %s, %s) "
+        "ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name RETURNING id",
+        (user_id, src["name"], slug, src.get("pfp_url") or "", seed),
+    )
+    cid = rows[0]["id"]
+
+    q(
+        "INSERT INTO cohort_members(cohort_id, account_id) "
+        "SELECT %s, account_id FROM cohort_members WHERE cohort_id=%s "
+        "ON CONFLICT DO NOTHING",
+        (cid, source_cid),
+    )
+
+    existing = q(
+        "SELECT id FROM profiles WHERE user_id=%s AND cohort_id=%s LIMIT 1",
+        (user_id, cid),
+    )
+    if existing:
+        pid = existing[0]["id"]
+    else:
+        prows = q(
+            "INSERT INTO profiles(user_id, name, type, cohort_id) "
+            "VALUES(%s, %s, 'cohort', %s) RETURNING id",
+            (user_id, src["name"], cid),
+        )
+        pid = prows[0]["id"]
+
+    return cid, pid
+
+
+@router.post("/cohort-library/fork/{source_cid}", response_class=HTMLResponse)
+async def cohort_library_fork(source_cid: int, r: Request):
+    redir = require_login(r)
+    if redir:
+        return redir
+    user = get_user(r)
+    cid, pid = _fork_cohort(source_cid, user["id"])
+    if not cid:
+        return "<p class='text-red-400 text-sm'>Cohort not found in library.</p>"
+    mc = q(
+        "SELECT COUNT(*) AS n FROM cohort_members WHERE cohort_id=%s", (cid,)
+    )[0]["n"]
+    return (
+        '<div class="mt-6 bg-gray-900 rounded-xl border border-emerald-800/30 p-6 text-center">'
+        '<div class="text-4xl mb-3">🎉</div>'
+        '<h2 class="text-xl font-semibold mb-1">Added to your workspace!</h2>'
+        f'<p class="text-gray-400 text-sm mb-4">{mc} members ready to explore. '
+        'Rename it, add or remove members anytime from the cohort settings.</p>'
+        f'<a href="/set-profile/{pid}" '
+        'class="inline-block bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-6 py-2.5 text-sm font-medium">'
+        'Go to Dashboard →</a>'
+        '</div>'
+    )
 
 
 @router.post("/discover/start", response_class=HTMLResponse)
@@ -167,11 +307,25 @@ async def disc_start(r: Request):
     try:
         f = await r.form()
         h = (f.get("handle") or "").strip().lstrip("@")
+        force = (f.get("force") or "") == "1"
     except Exception:
         j = await r.json()
         h = (j.get("handle") or "").strip().lstrip("@")
+        force = False
     if not h:
         return "<p class='text-red-400 text-sm'>Enter a handle</p>"
+
+    if not force:
+        lib = q(
+            "SELECT c.id, c.name, c.pfp_url, COUNT(cm.account_id) AS member_count "
+            "FROM cohorts c JOIN cohort_members cm ON cm.cohort_id=c.id "
+            "WHERE c.is_public=TRUE AND LOWER(c.seed_handle)=%s "
+            "GROUP BY c.id ORDER BY member_count DESC LIMIT 1",
+            (h.lower(),),
+        )
+        if lib:
+            return _library_match_card(lib[0], h)
+
     dsid = secrets.token_hex(16)
     user = get_user(r)
     q(

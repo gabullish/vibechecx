@@ -35,16 +35,36 @@ _PERIOD_INTERVALS = {
 }
 
 _LEADERBOARD_SORT_COLS = {
-    "composite": "composite DESC",
-    "engagement_rate": "engagement_rate DESC NULLS LAST",
-    "voice_share": "voice_share DESC NULLS LAST",
-    "likes": "likes DESC",
-    "views": "views DESC",
-    "likes_per_post": "likes_per_post DESC NULLS LAST",
-    "views_per_post": "views_per_post DESC NULLS LAST",
-    "reply_ratio": "reply_ratio DESC NULLS LAST",
-    "posts": "posts DESC",
-    "followers": "followers_count DESC",
+    "composite": "composite",
+    "engagement_rate": "engagement_rate",
+    "voice_share": "voice_share",
+    "likes": "likes",
+    "views": "views",
+    "likes_per_post": "likes_per_post",
+    "views_per_post": "views_per_post",
+    "reply_ratio": "reply_ratio",
+    "posts": "posts",
+    "followers": "followers_count",
+    "amplification_rate": "amplification_rate",
+    "conversation_rate": "conversation_rate",
+    "reach_per_follower": "reach_per_follower",
+}
+
+# Maps URL sort key → actual column name in the query result dict
+_COMBO_ROW_KEY = {
+    "composite": "composite",
+    "engagement_rate": "engagement_rate",
+    "voice_share": "voice_share",
+    "likes": "likes",
+    "views": "views",
+    "likes_per_post": "likes_per_post",
+    "views_per_post": "views_per_post",
+    "reply_ratio": "reply_ratio",
+    "posts": "posts",
+    "followers": "followers_count",
+    "amplification_rate": "amplification_rate",
+    "conversation_rate": "conversation_rate",
+    "reach_per_follower": "reach_per_follower",
 }
 
 _PERIOD_DAYS = {
@@ -184,8 +204,18 @@ def _member_rows(cid):
     )
 
 
-def _leaderboard_query(cid, period):
-    """Run the leaderboard CTE for a cohort+period. Returns list[dict]."""
+def _leaderboard_query(cid, period, sort="composite", asc=False):
+    """Run the leaderboard CTE for a cohort+period. Returns list[dict].
+
+    Composite = WER 60% + Consistency 15% + Cadence 10% + Reach Efficiency 10%
+                + Voice Share 5%
+
+    WER: log-scaled, quote tweets 2.5x, replies 3x, excludes views=0 tweets.
+    Consistency: inverse CV of daily likes over full period (penalises gaps).
+    Cadence: 2 posts/day ceiling.
+    Reach efficiency: views/post vs cohort average, capped at 3x.
+    Voice share: token weight only (primary use is display column).
+    """
     interval = _PERIOD_INTERVALS.get(period, "7 days")
     days = _PERIOD_DAYS.get(period, 7)
     return q(
@@ -193,13 +223,26 @@ def _leaderboard_query(cid, period):
         WITH per_account AS (
           SELECT
             a.id, a.username, a.display_name, a.avatar_url, a.followers_count,
+            -- display counts (unfiltered for views, so display columns are honest)
             COUNT(t.tweet_id) FILTER (WHERE NOT t.is_retweet)                       AS posts,
             COUNT(t.tweet_id) FILTER (WHERE t.is_reply AND NOT t.is_retweet)        AS replies,
             COUNT(t.tweet_id) FILTER (WHERE NOT t.is_reply AND NOT t.is_retweet)    AS originals,
             COALESCE(SUM(t.likes)    FILTER (WHERE NOT t.is_retweet), 0)::bigint    AS likes,
             COALESCE(SUM(t.views)    FILTER (WHERE NOT t.is_retweet), 0)::bigint    AS views,
             COALESCE(SUM(t.retweets) FILTER (WHERE NOT t.is_retweet), 0)::bigint    AS retweets_count,
-            COALESCE(SUM(t.replies)  FILTER (WHERE NOT t.is_retweet), 0)::bigint    AS replies_received
+            COALESCE(SUM(t.replies)  FILTER (WHERE NOT t.is_retweet), 0)::bigint    AS replies_received,
+            -- WER numerator: weighted engagement, quote tweets 2.5x, views=0 excluded
+            COALESCE(SUM(
+              CASE WHEN t.is_retweet THEN 0
+                   ELSE (t.likes * 1.0 + t.retweets * 2.0 + t.replies * 3.0)
+                        * CASE WHEN t.is_quote THEN 2.5 ELSE 1.0 END
+              END
+            ) FILTER (WHERE NOT t.is_retweet AND t.views > 0), 0)::float            AS weighted_eng,
+            -- WER denominator: views on non-retweet tweets that have view data
+            COALESCE(SUM(t.views)
+              FILTER (WHERE NOT t.is_retweet AND t.views > 0), 0)::float             AS views_for_wer,
+            -- Reach efficiency denominator: posts that have view data
+            COUNT(t.tweet_id) FILTER (WHERE NOT t.is_retweet AND t.views > 0)        AS posts_with_views
           FROM cohort_members cm
           JOIN accounts a ON a.id = cm.account_id
           LEFT JOIN tweets t ON t.author_account_id = a.id
@@ -207,66 +250,136 @@ def _leaderboard_query(cid, period):
           WHERE cm.cohort_id = %s
           GROUP BY a.id
         ),
+
         cohort_totals AS (
-          SELECT NULLIF(SUM(likes), 0)::float AS total_likes FROM per_account
-        ),
-        days AS (
-          SELECT generate_series(0, 6) AS d
-        ),
-        daily AS (
           SELECT
-            p.id AS account_id, days.d,
-            COALESCE(SUM(t.likes), 0)::int AS day_likes
+            NULLIF(SUM(likes), 0)::float                                        AS total_likes,
+            AVG(CASE WHEN posts_with_views > 0
+                     THEN views::float / posts_with_views ELSE NULL END)        AS avg_views_per_post
+          FROM per_account
+        ),
+
+        -- Full-period daily likes for consistency (one row per account per day).
+        -- CROSS JOIN with generate_series ensures zero-like days are present so
+        -- gaps are penalised — an account posting only 3 of 30 days has high variance.
+        consistency_daily AS (
+          SELECT
+            p.id AS account_id,
+            gs.d,
+            COALESCE(SUM(t.likes) FILTER (WHERE NOT t.is_retweet), 0)::float   AS day_likes
           FROM per_account p
-          CROSS JOIN days
+          CROSS JOIN generate_series(0, {days} - 1) AS gs(d)
           LEFT JOIN tweets t ON t.author_account_id = p.id
                              AND NOT t.is_retweet
                              AND date_trunc('day', t.created_at)
-                                 = date_trunc('day', NOW() - days.d * INTERVAL '1 day')
-          GROUP BY p.id, days.d
+                                 = date_trunc('day', NOW() - gs.d * INTERVAL '1 day')
+          GROUP BY p.id, gs.d
+        ),
+
+        -- Coefficient of variation: STDDEV/AVG. Inverse maps 0 variance → 1.0.
+        -- Accounts with avg daily likes < 1 get 0.0 (no real engagement signal).
+        consistency AS (
+          SELECT
+            account_id,
+            CASE
+              WHEN AVG(day_likes) < 1.0 THEN 0.0
+              WHEN STDDEV(day_likes) = 0  THEN 1.0
+              ELSE 1.0 / (1.0 + STDDEV(day_likes) / AVG(day_likes))
+            END                                                                 AS consistency_score
+          FROM consistency_daily
+          GROUP BY account_id
+        ),
+
+        -- 7-day trailing sparkline (display only, independent of period length)
+        spark_daily AS (
+          SELECT
+            p.id AS account_id, gs.d,
+            COALESCE(SUM(t.likes), 0)::int                                      AS day_likes
+          FROM per_account p
+          CROSS JOIN generate_series(0, 6) AS gs(d)
+          LEFT JOIN tweets t ON t.author_account_id = p.id
+                             AND NOT t.is_retweet
+                             AND date_trunc('day', t.created_at)
+                                 = date_trunc('day', NOW() - gs.d * INTERVAL '1 day')
+          GROUP BY p.id, gs.d
         ),
         spark AS (
           SELECT account_id,
-                 array_agg(day_likes ORDER BY d DESC)::int[] AS daily_likes
-          FROM daily GROUP BY account_id
+                 array_agg(day_likes ORDER BY d DESC)::int[]                    AS daily_likes
+          FROM spark_daily GROUP BY account_id
         )
+
         SELECT
           p.id, p.username, p.display_name, p.avatar_url,
           p.followers_count, p.posts, p.replies, p.originals,
           p.likes, p.views, p.retweets_count, p.replies_received,
-          CASE WHEN p.views > 0 THEN p.likes::float / p.views ELSE NULL END   AS engagement_rate,
+
+          -- Display metrics (unchanged from previous version)
+          CASE WHEN p.views > 0 THEN p.likes::float / p.views
+               ELSE NULL END                                                    AS engagement_rate,
           CASE WHEN (p.replies + p.originals) > 0
                THEN p.replies::float / (p.replies + p.originals)
-               ELSE NULL END                                                  AS reply_ratio,
-          CASE WHEN ct.total_likes IS NOT NULL AND ct.total_likes > 0
+               ELSE NULL END                                                    AS reply_ratio,
+          CASE WHEN ct.total_likes > 0
                THEN p.likes::float / ct.total_likes * 100.0
-               ELSE NULL END                                                  AS voice_share,
-          CASE WHEN p.posts > 0
-               THEN p.likes::float / p.posts
-               ELSE NULL END                                                  AS likes_per_post,
-          CASE WHEN p.posts > 0
-               THEN p.views::float / p.posts
-               ELSE NULL END                                                  AS views_per_post,
-          -- Composite = WER (55 pct) + Voice share (30 pct) + Activity cadence (15 pct).
-          -- WER: quality per impression; falls back to per-follower if views=0.
-          -- No follower-count penalty — big accounts aren't punished for having an audience.
-          LEAST(
-            CASE WHEN p.views > 0 THEN
-              (p.likes * 1.0 + p.retweets_count * 2.0 + p.replies_received * 4.0)
-              / p.views * 100.0
-            ELSE
-              (p.likes * 1.0 + p.retweets_count * 2.0 + p.replies_received * 4.0)
-              / GREATEST(p.followers_count, 1) * 100.0
-            END, 25.0
-          ) / 25.0 * 0.55
-          + COALESCE(p.likes::float / NULLIF(ct.total_likes, 0) * 100.0, 0.0) * 0.30
-          + LEAST(p.posts::float / GREATEST({days}.0, 1.0) / 3.0, 1.0) * 0.15
-                                                                              AS composite,
-          COALESCE(spark.daily_likes, ARRAY[0,0,0,0,0,0,0]::int[])            AS daily_likes
+               ELSE NULL END                                                    AS voice_share,
+          CASE WHEN p.posts > 0 THEN p.likes::float / p.posts ELSE NULL END    AS likes_per_post,
+          CASE WHEN p.posts > 0 THEN p.views::float / p.posts ELSE NULL END    AS views_per_post,
+
+          -- Component scores exposed for debugging / future UI use
+          CASE WHEN p.views_for_wer > 0
+               THEN LOG(1 + LEAST(p.weighted_eng / p.views_for_wer * 100.0, 25.0))
+                    / LOG(26.0)
+               ELSE 0
+          END                                                                   AS wer_score,
+          COALESCE(con.consistency_score, 0)                                    AS consistency_score,
+
+          -- Composite score (weights sum to 1.0)
+          (
+            -- WER 60%%: log-scaled engagement quality per impression
+            CASE WHEN p.views_for_wer > 0
+                 THEN LOG(1 + LEAST(p.weighted_eng / p.views_for_wer * 100.0, 25.0))
+                      / LOG(26.0)
+                 ELSE 0
+            END * 0.60
+
+            -- Consistency 15%%: inverse CV of daily likes (full period)
+            + COALESCE(con.consistency_score, 0) * 0.15
+
+            -- Cadence 10%%: 2 posts/day = full score
+            + LEAST(p.posts::float / GREATEST({days}.0, 1.0) / 2.0, 1.0) * 0.10
+
+            -- Reach efficiency 10%%: views/post vs cohort average, capped at 3x
+            + CASE WHEN p.posts_with_views > 0 AND ct.avg_views_per_post > 0
+                   THEN LEAST(
+                     (p.views::float / p.posts_with_views) / ct.avg_views_per_post,
+                     3.0
+                   ) / 3.0
+                   ELSE 0
+              END * 0.10
+
+            -- Voice share 5%%: token weight, primary value is display column
+            + COALESCE(p.likes::float / NULLIF(ct.total_likes, 0), 0.0) * 0.05
+          )                                                                     AS composite,
+
+          COALESCE(spark.daily_likes, ARRAY[0,0,0,0,0,0,0]::int[])             AS daily_likes,
+
+          -- Formula columns (social media benchmarks)
+          -- Amplification Rate: retweets per post (proxy for shareability)
+          CASE WHEN p.posts > 0 THEN p.retweets_count::float / p.posts ELSE NULL END
+                                                                              AS amplification_rate,
+          -- Conversation Rate: replies received per post
+          CASE WHEN p.posts > 0 THEN p.replies_received::float / p.posts ELSE NULL END
+                                                                              AS conversation_rate,
+          -- Reach per Follower: total views divided by follower count
+          CASE WHEN p.followers_count > 0 THEN p.views::float / p.followers_count ELSE NULL END
+                                                                              AS reach_per_follower
+
         FROM per_account p
         CROSS JOIN cohort_totals ct
+        LEFT JOIN consistency con ON con.account_id = p.id
         LEFT JOIN spark ON spark.account_id = p.id
-        ORDER BY composite DESC
+        ORDER BY {_LEADERBOARD_SORT_COLS.get(sort, "composite")} {"ASC" if asc else "DESC"} NULLS LAST
         """,
         (cid,),
     )
@@ -523,35 +636,23 @@ def cohort_det(cid: int, r: Request, days: int = 0):
         f'<div class="flex items-center gap-2 mb-4 bg-gray-900 rounded-xl border border-gray-800 p-3">'
         f'<span class="text-xs font-semibold text-gray-400">✨</span>'
         f'{_period_links}'
-        f'<div class="ml-auto">'
-        f'<style>.ld-htmx.htmx-request {{ display: inline-flex !important; }}</style>'
-        f'<button hx-post="/cohort/{c["id"]}/generate-insights?period={ip}" '
-        f'hx-target="#tab-insights" hx-swap="innerHTML" '
-        'class="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white transition" '
-        '_="on click toggle .hidden on #chrt-ld then wait for htmx:afterOnLoad then add .hidden to #chrt-ld">'
-        '✨ Generate</button>'
-        f'<span id="chrt-ld" class="hidden text-xs text-purple-400 ml-2">⟳ ~10-15s</span>'
-        '</div></div>'
+        '</div>'
         f'<div x-data="{{ tab: \'members\' }}">'
         '<div class="flex gap-1 mb-4 border-b border-gray-800 pb-2">'
         f'<button @click="tab=\'members\'" :class="tab===\'members\'?\'bg-emerald-700 text-white\':\'text-gray-400 hover:text-white\'" '
         'class="px-3 py-1.5 text-xs rounded-t transition font-medium">👥 Members</button>'
-        f'<button @click="tab=\'leaderboard\'" :class="tab===\'leaderboard\'?\'bg-emerald-700 text-white\':\'text-gray-400 hover:text-white\'" '
+        f'<button @click="tab=\'leaderboard\'" data-lb-trigger :class="tab===\'leaderboard\'?\'bg-emerald-700 text-white\':\'text-gray-400 hover:text-white\'" '
         'class="px-3 py-1.5 text-xs rounded-t transition">📊 Leaderboard</button>'
-        f'<button @click="tab=\'insights\'" :class="tab===\'insights\'?\'bg-emerald-700 text-white\':\'text-gray-400 hover:text-white\'" '
-        'class="px-3 py-1.5 text-xs rounded-t transition">✨ Insights <span id="cohort-insights-age" class="text-gray-400 font-normal normal-case"></span></button>'
         '</div>'
         f'<div x-show="tab===\'members\'">'
         f'<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{cards}</div>'
         '</div>'
-        f'<template x-if="tab===\'leaderboard\'">'
-        f'<div hx-get="/cohort/{c["id"]}/leaderboard?period={ip}&sort=composite&dir=desc" '
-        'hx-trigger="load" hx-swap="outerHTML transition:true"></div>'
-        '</template>'
-        f'<div x-show="tab===\'insights\'">'
-        f'<div id="tab-insights" hx-get="/cohort/{c["id"]}/insights?period={ip}" hx-swap="innerHTML" class="text-center py-8 text-gray-500 text-sm">'
-        '<p class="text-gray-500 text-xs mb-4">✨ Click the Insights button above to generate.</p>'
-        f'</div></div></div>'
+        f'<div x-show="tab===\'leaderboard\'">'
+        f'<div id="tab-leaderboard" '
+        f'hx-get="/cohort/{c["id"]}/leaderboard?period={ip}&sort=composite&dir=desc" '
+        'hx-trigger="click once from:[data-lb-trigger]" hx-swap="outerHTML transition:true">'
+        '<div class="text-center py-8 text-gray-500 text-sm">Loading leaderboard…</div>'
+        '</div></div></div>'
     ) + HF
 
 
@@ -579,16 +680,22 @@ def scrape_cohort(cid: int, r: Request):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
     )
     return (
-        '<div class="flex items-center gap-2 text-xs bg-cyan-900/30 border border-cyan-800 rounded-lg px-3 py-2 mt-4" '
+        '<div class="fixed top-14 right-4 z-50 w-80 pointer-events-auto '
+        'flex items-center gap-2 text-xs bg-cyan-900/80 border border-cyan-800 '
+        'rounded-xl px-3 py-2.5 shadow-xl" '
         'hx-get="/scrape-progress" hx-trigger="every 2s" hx-swap="outerHTML transition:true">'
-        '<div class="animate-pulse inline-block w-2 h-2 rounded-full bg-cyan-400"></div>'
+        '<div class="animate-pulse inline-block w-2 h-2 rounded-full bg-cyan-400 flex-shrink-0"></div>'
         f'<span class="text-cyan-300">Starting batch scrape of {html.escape(cn)}…</span></div>'
     )
 
 
 @router.get("/cohort/{cid}/leaderboard", response_class=HTMLResponse)
-def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "composite", dir: str = "desc"):
-    """Pure-SQL leaderboard. No cache, no compute step, no spinner."""
+def cohort_leaderboard(
+    cid: int, r: Request,
+    period: str = "7d", sort: str = "composite", dir: str = "desc",
+    combo: str = "",
+):
+    """Pure-SQL leaderboard with SQL-level sort and optional combo ranking."""
     redir = require_login(r)
     if redir:
         return redir
@@ -600,19 +707,42 @@ def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "co
     if dir not in ("asc", "desc"):
         dir = "desc"
 
-    lb = _leaderboard_query(cid, period)
-    # Client-side ordering by chosen sort key.
+    # Parse combo metrics — only allow known sortable keys
+    combo_metrics = [m for m in combo.split(",") if m and m in _COMBO_ROW_KEY] if combo else []
+    combo_str = ",".join(combo_metrics)
+
     asc = dir == "asc"
-    if sort in _LEADERBOARD_SORT_COLS:
-        def _k(row):
-            if sort == "followers":
-                v = row.get("followers_count")
-            elif sort == "engagement_rate":
-                v = row.get("engagement_rate")
-            else:
-                v = row.get(sort)
-            return (v if v is not None else -1)
-        lb = sorted(lb, key=_k, reverse=not asc)
+    # When combo sort is active, fetch default SQL order; we'll re-sort in Python
+    effective_sort = sort if sort != "combo" else "composite"
+    lb = _leaderboard_query(cid, period, sort=effective_sort, asc=asc)
+
+    # Combo sort: normalize each selected metric 0–1 across rows, average → score
+    if sort == "combo" and len(combo_metrics) >= 2:
+        import math
+        def _get_val(row, key):
+            v = row.get(_COMBO_ROW_KEY[key])
+            return float(v) if v is not None else None
+
+        mins, maxs = {}, {}
+        for m in combo_metrics:
+            vals = [_get_val(row, m) for row in lb if _get_val(row, m) is not None]
+            mins[m] = min(vals) if vals else 0.0
+            maxs[m] = max(vals) if vals else 1.0
+
+        def _combo_score(row):
+            scores = []
+            for m in combo_metrics:
+                v = _get_val(row, m)
+                if v is None:
+                    continue
+                span = maxs[m] - mins[m]
+                scores.append((v - mins[m]) / span if span > 0 else 0.5)
+            return sum(scores) / len(scores) if scores else 0.0
+
+        lb = sorted(lb, key=_combo_score, reverse=True)
+        # Attach combo score to each row for display
+        for row in lb:
+            row["_combo_score"] = _combo_score(row)
 
     if not lb:
         return (
@@ -638,6 +768,9 @@ def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "co
         "reply_ratio": max((row.get("reply_ratio") or -1) for row in lb),
         "posts": max((row.get("posts") or -1) for row in lb),
         "followers_count": max((row.get("followers_count") or -1) for row in lb),
+        "amplification_rate": max((row.get("amplification_rate") or -1) for row in lb),
+        "conversation_rate": max((row.get("conversation_rate") or -1) for row in lb),
+        "reach_per_follower": max((row.get("reach_per_follower") or -1) for row in lb),
     }
 
     def _cell(value, key, fmt_str="{:.2f}", suffix=""):
@@ -662,6 +795,9 @@ def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "co
         spark = row.get("daily_likes") or []
         spark_html = _sparkline_svg(spark)
         sentiment_color = "text-emerald-400" if (row.get("engagement_rate") or 0) > 0.02 else "text-gray-400"
+        combo_badge = ""
+        if sort == "combo" and "_combo_score" in row:
+            combo_badge = f'<td class="py-2 px-2 text-right text-xs text-purple-400">{row["_combo_score"]:.3f}</td>'
         rows_html += (
             '<tr class="border-b border-gray-800 hover:bg-gray-800/40 cursor-pointer transition" '
             f"onclick=\"window.location='/account/{html.escape(row['username'])}'\">"
@@ -669,6 +805,7 @@ def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "co
             f'<td class="py-2 px-2"><div class="flex items-center gap-2">{avatar_html}'
             f'<a href="/account/{html.escape(row["username"])}" class="text-emerald-400 hover:underline text-sm font-medium">'
             f'@{html.escape(row["username"])}</a></div></td>'
+            + (combo_badge if sort == "combo" else "")
             + _cell(row.get("composite"), "composite", "{:.3f}")
             + _cell(
                 (row.get("engagement_rate") or 0) * 100 if row.get("engagement_rate") is not None else None,
@@ -686,8 +823,20 @@ def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "co
             + f'<td class="py-2 px-2 text-center {sentiment_color}">{spark_html}</td>'
             + _cell(row.get("posts"), "posts", "{:d}")
             + _cell(row.get("followers_count"), "followers_count", "{:d}")
+            + _cell(row.get("amplification_rate"), "amplification_rate", "{:.2f}")
+            + _cell(row.get("conversation_rate"), "conversation_rate", "{:.2f}")
+            + _cell(row.get("reach_per_follower"), "reach_per_follower", "{:.1f}")
             + '</tr>'
         )
+
+    def _toggle_combo(key):
+        """Return new combo string with key toggled in/out."""
+        current = set(combo_metrics)
+        if key in current:
+            current.discard(key)
+        else:
+            current.add(key)
+        return ",".join(m for m in _COMBO_ROW_KEY if m in current)  # stable order
 
     def _sort_link(key, label, tooltip_text=""):
         is_active = sort == key
@@ -699,21 +848,60 @@ def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "co
             glyph = ""
         cls = "text-emerald-400" if is_active else "text-gray-500 hover:text-emerald-400"
         label_html = tip(label, tooltip_text) if tooltip_text else label
+        # Magnet toggle (only for sortable metrics, not combo itself)
+        magnet_html = ""
+        if key in _COMBO_ROW_KEY:
+            in_combo = key in combo_metrics
+            new_combo = _toggle_combo(key)
+            magnet_cls = "text-purple-400 ml-0.5" if in_combo else "text-gray-700 hover:text-purple-400 ml-0.5"
+            magnet_html = (
+                f'<a hx-get="/cohort/{cid}/leaderboard?period={period}&sort={sort}&dir={dir}&combo={new_combo}" '
+                f'hx-target="#tab-leaderboard" hx-swap="outerHTML transition:true" '
+                f'class="cursor-pointer select-none {magnet_cls}" title="Toggle in combo">🧲</a>'
+            )
         return (
-            f'<a hx-get="/cohort/{cid}/leaderboard?period={period}&sort={key}&dir={next_dir}" '
+            f'<span class="inline-flex items-center gap-0.5">'
+            f'<a hx-get="/cohort/{cid}/leaderboard?period={period}&sort={key}&dir={next_dir}&combo={combo_str}" '
             f'hx-target="#tab-leaderboard" hx-swap="outerHTML transition:true" '
             f'class="cursor-pointer select-none {cls}">{label_html}{glyph}</a>'
+            f'{magnet_html}</span>'
         )
 
     def _period_button(p):
         cls = "bg-emerald-700 text-white" if period == p else "text-gray-400 hover:text-white"
         return (
-            f'<a hx-get="/cohort/{cid}/leaderboard?period={p}&sort={sort}&dir={dir}" '
+            f'<a hx-get="/cohort/{cid}/leaderboard?period={p}&sort={sort}&dir={dir}&combo={combo_str}" '
             f'hx-target="#tab-leaderboard" hx-swap="outerHTML transition:true" '
             f'class="px-3 py-1 text-xs rounded {cls}">{p}</a>'
         )
 
     period_seg = ''.join(_period_button(p) for p in ("24h", "7d", "14d", "30d", "all"))
+
+    # Combo banner
+    combo_banner = ""
+    if combo_metrics:
+        metric_labels = {
+            "composite": "Composite", "engagement_rate": "Eng rate", "voice_share": "Voice %",
+            "likes": "Likes", "views": "Views", "likes_per_post": "Likes/post",
+            "views_per_post": "Views/post", "reply_ratio": "Reply %", "posts": "Posts",
+            "followers": "Followers", "amplification_rate": "Amplify rate",
+            "conversation_rate": "Conv rate", "reach_per_follower": "Reach/follower",
+        }
+        pills = " · ".join(metric_labels.get(m, m) for m in combo_metrics)
+        combo_sort_url = f"/cohort/{cid}/leaderboard?period={period}&sort=combo&dir=desc&combo={combo_str}"
+        clear_url = f"/cohort/{cid}/leaderboard?period={period}&sort=composite&dir=desc"
+        combo_banner = (
+            '<div class="mb-3 flex items-center gap-3 flex-wrap bg-purple-900/20 border border-purple-800/50 '
+            'rounded-lg px-3 py-2 text-xs">'
+            '<span class="text-purple-300">🧲 Combo:</span>'
+            f'<span class="text-gray-300">{pills}</span>'
+            f'<a hx-get="{combo_sort_url}" hx-target="#tab-leaderboard" hx-swap="outerHTML transition:true" '
+            'class="ml-auto px-2 py-0.5 bg-purple-700 hover:bg-purple-600 text-white rounded cursor-pointer">'
+            'Sort by combo</a>'
+            f'<a hx-get="{clear_url}" hx-target="#tab-leaderboard" hx-swap="outerHTML transition:true" '
+            'class="px-2 py-0.5 text-gray-400 hover:text-white rounded cursor-pointer">✕ Clear</a>'
+            '</div>'
+        )
 
     composite_tip = (
         "Weighted blend: 55% engagement quality (likes+retweets×2+replies×4 per view), "
@@ -744,14 +932,25 @@ def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "co
         "Views ÷ posts. Proportional reach per piece of content. "
         "Rewards quality over quantity; not affected by follower count."
     )
+    amp_tip = "Retweets per post. Measures how shareable content is."
+    conv_tip = "Replies received per post. Measures how much conversation content sparks."
+    rpf_tip = "Total views divided by follower count. Reach relative to audience size."
 
-    # Column group labels: #, Account, Composite, Eng rate, Voice% = 5 lead cols
-    # then Likes, Views = 2 absolute; Likes/post, Views/post = 2 proportional
-    # then Reply%, 7d spark, Posts, Followers = 4 trail cols
-    grp_lead = '<th class="py-1 px-2 border-b border-gray-800/50" colspan="5"></th>'
+    combo_header = (
+        '<th class="py-2 px-2 text-right text-purple-400">Score</th>'
+        if sort == "combo" else ""
+    )
+
+    # Column group labels
+    # #, Account, [combo?], Composite, Eng rate, Voice% = 5+combo lead cols
+    # Likes, Views = 2 absolute; Likes/post, Views/post = 2 proportional
+    # Reply%, 7d spark, Posts, Followers = 4 trail; Amplify, Conv, Reach = 3 formula
+    combo_span = 1 if sort == "combo" else 0
+    grp_lead = f'<th class="py-1 px-2 border-b border-gray-800/50" colspan="{5 + combo_span}"></th>'
     grp_abs = '<th class="py-1 px-2 text-center text-[9px] text-gray-600 uppercase tracking-widest border-b border-gray-800/50 border-l border-l-gray-700" colspan="2">— absolute —</th>'
     grp_prop = '<th class="py-1 px-2 text-center text-[9px] text-gray-600 uppercase tracking-widest border-b border-gray-800/50 border-l border-l-gray-700" colspan="2">— per post —</th>'
     grp_trail = '<th class="py-1 px-2 border-b border-gray-800/50" colspan="4"></th>'
+    grp_formula = '<th class="py-1 px-2 text-center text-[9px] text-gray-600 uppercase tracking-widest border-b border-gray-800/50 border-l border-l-gray-700" colspan="3">— formulas —</th>'
 
     return (
         f'<div id="tab-leaderboard">'
@@ -763,13 +962,15 @@ def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "co
         f'{period_seg}'
         '</div>'
         '</div>'
+        f'{combo_banner}'
         '<div class="overflow-x-auto rounded-lg border border-gray-800">'
         '<table class="w-full text-sm table-auto">'
         '<thead class="bg-gray-900/80">'
-        f'<tr>{grp_lead}{grp_abs}{grp_prop}{grp_trail}</tr>'
+        f'<tr>{grp_lead}{grp_abs}{grp_prop}{grp_trail}{grp_formula}</tr>'
         '<tr class="text-[11px] text-gray-500 uppercase tracking-wider border-b border-gray-800">'
         '<th class="py-2 px-2 text-center">#</th>'
         '<th class="py-2 px-2 text-left">Account</th>'
+        f'{combo_header}'
         f'<th class="py-2 px-2 text-right">{_sort_link("composite", "Composite", composite_tip)}</th>'
         f'<th class="py-2 px-2 text-right">{_sort_link("engagement_rate", "Eng rate", eng_tip)}</th>'
         f'<th class="py-2 px-2 text-right">{_sort_link("voice_share", "Voice %", voice_tip)}</th>'
@@ -781,6 +982,9 @@ def cohort_leaderboard(cid: int, r: Request, period: str = "7d", sort: str = "co
         '<th class="py-2 px-2 text-center text-gray-500">7d</th>'
         f'<th class="py-2 px-2 text-right">{_sort_link("posts", "Posts", posts_tip)}</th>'
         f'<th class="py-2 px-2 text-right">{_sort_link("followers", "Followers", followers_tip)}</th>'
+        f'<th class="py-2 px-2 text-right">{_sort_link("amplification_rate", "Amplify", amp_tip)}</th>'
+        f'<th class="py-2 px-2 text-right">{_sort_link("conversation_rate", "Conv rate", conv_tip)}</th>'
+        f'<th class="py-2 px-2 text-right">{_sort_link("reach_per_follower", "Reach/flwr", rpf_tip)}</th>'
         '</tr></thead>'
         f'<tbody>{rows_html}</tbody></table></div></div>'
     )
@@ -795,7 +999,12 @@ def cohort_generate_insights(cid: int, r: Request, period: str = "7d"):
     if not q("SELECT 1 FROM cohorts WHERE id=%s AND user_id=%s", (cid, user["id"])):
         return "<span class='text-red-400'>Not found</span>"
     from web.render_insights import _ai_error_card  # noqa: E402
-    insight, *_ = vi.cached_insights("cohort", cid, period, force=True)
+    cohort_row = q("SELECT name FROM cohorts WHERE id=%s", (cid,))
+    cname = cohort_row[0]["name"] if cohort_row else f"cohort#{cid}"
+    insight, *_ = vi.cached_insights(
+        "cohort", cid, period, force=True,
+        user_id=user["id"], display_name=f"{cname} · {period}",
+    )
     if not insight:
         return _ai_error_card(
             f"/cohort/{cid}/generate-insights?period={period}",

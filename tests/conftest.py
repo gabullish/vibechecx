@@ -34,12 +34,12 @@ def _truncate_tables():
             "cohort_interactions, profiles, cohorts, accounts, users "
             "RESTART IDENTITY CASCADE"
         )
-        # insights_cache may or may not exist depending on migrations applied.
-        cur.execute(
-            "TRUNCATE TABLE insights_cache RESTART IDENTITY"
-            if _table_exists(cur, 'insights_cache')
-            else "SELECT 1"
-        )
+        for tbl in ('insights_cache', 'scrape_queue'):
+            cur.execute(
+                f"TRUNCATE TABLE {tbl} RESTART IDENTITY"
+                if _table_exists(cur, tbl)
+                else "SELECT 1"
+            )
     conn.commit()
     conn.close()
     yield

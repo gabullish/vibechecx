@@ -354,13 +354,72 @@ def admin_page(r: Request):
 
         f"<h2 class='text-xs font-semibold text-gray-500 uppercase mb-3'>Scrape Queue "
         f"<span class='text-gray-400 font-normal normal-case'>, {queue_summary}</span></h2>"
-        "<div class='bg-gray-900 rounded-xl border border-gray-800 overflow-hidden'>"
+        "<div class='bg-gray-900 rounded-xl border border-gray-800 overflow-hidden mb-8'>"
         "<table class='w-full'><thead><tr class='text-xs text-gray-500 uppercase bg-gray-800/50'>"
         "<th class='text-left p-3'>#</th><th class='text-left p-3'>Status</th>"
         "<th class='text-left p-3'>User</th><th class='text-left p-3'>Scope</th>"
         "<th class='text-left p-3'>Days</th><th class='text-left p-3'>Queued</th>"
         f"</tr></thead><tbody>{queue_rows}</tbody></table></div>"
+
+        "<h2 class='text-xs font-semibold text-gray-500 uppercase mb-3'>Insights Library</h2>"
+        "<div class='bg-gray-900 rounded-xl border border-gray-800 overflow-hidden'>"
+        "<div hx-get='/admin/insights-library' hx-trigger='load' hx-swap='innerHTML'>"
+        "<p class='text-center text-gray-500 text-sm py-4'>Loading…</p>"
+        "</div></div>"
     ) + HF
+
+
+@router.get("/admin/insights-library", response_class=HTMLResponse)
+def admin_insights_library(r: Request):
+    """HTMX fragment: all users' cached insights (admin only)."""
+    redir, _user = _require_admin(r)
+    if redir:
+        return redir
+
+    rows = q(
+        """
+        SELECT ic.id, ic.display_name, ic.scope_type, ic.scope_id,
+               ic.period, ic.provider, ic.generated_at, u.username
+          FROM insights_cache ic
+          LEFT JOIN users u ON u.id = ic.user_id
+         ORDER BY ic.generated_at DESC
+         LIMIT 200
+        """
+    )
+    if not rows:
+        return "<p class='text-gray-500 text-xs text-center py-4'>No insights cached yet.</p>"
+
+    def _row(row):
+        name = html.escape(row.get("display_name") or f"{row['scope_type']} #{row['scope_id']}")
+        owner = html.escape(row.get("username") or "—")
+        age = rel_time(row["generated_at"]) if row.get("generated_at") else "?"
+        provider = html.escape((row.get("provider") or "")[:20])
+        dl_url = f"/insights/library/download/{row['id']}?format=md"
+        dl_json_url = f"/insights/library/download/{row['id']}?format=json"
+        return (
+            "<tr class='border-b border-gray-800 text-sm'>"
+            f"<td class='py-2 px-3 text-gray-400'>{row['scope_type']}</td>"
+            f"<td class='py-2 px-3 font-medium text-gray-200'>{name}</td>"
+            f"<td class='py-2 px-3 text-gray-400'>{row['period']}</td>"
+            f"<td class='py-2 px-3 text-gray-400'>{owner}</td>"
+            f"<td class='py-2 px-3 text-gray-500'>{age}</td>"
+            f"<td class='py-2 px-3 text-gray-500 text-xs'>{provider}</td>"
+            f"<td class='py-2 px-3'>"
+            f"<a href='{dl_url}' class='text-emerald-400 hover:underline text-xs mr-2'>↓ MD</a>"
+            f"<a href='{dl_json_url}' class='text-blue-400 hover:underline text-xs'>↓ JSON</a>"
+            f"</td></tr>"
+        )
+
+    rows_html = "".join(_row(rr) for rr in rows)
+    return (
+        "<table class='w-full text-sm'>"
+        "<thead><tr class='text-[11px] text-gray-500 uppercase bg-gray-800/50 border-b border-gray-800'>"
+        "<th class='text-left p-3'>Type</th><th class='text-left p-3'>Name</th>"
+        "<th class='text-left p-3'>Period</th><th class='text-left p-3'>User</th>"
+        "<th class='text-left p-3'>Generated</th><th class='text-left p-3'>Provider</th>"
+        "<th class='text-left p-3'>Download</th>"
+        f"</tr></thead><tbody>{rows_html}</tbody></table>"
+    )
 
 
 @router.post("/admin/primary-provider")

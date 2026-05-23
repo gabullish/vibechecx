@@ -55,9 +55,8 @@ def account_page(handle: str, r: Request, days: int = 365):
                 '<div class="flex items-center gap-3 bg-cyan-900/30 border border-cyan-700 rounded-xl px-5 py-4 mb-4">'
                 '<span class="inline-block w-3 h-3 rounded-full bg-cyan-400 animate-pulse flex-shrink-0"></span>'
                 f'<div><p class="text-cyan-300 font-medium text-sm">Scraping @{html.escape(handle)}…</p>'
-                '<p class="text-cyan-500 text-xs mt-0.5">Pulling tweets and profile data. This takes 2–5 minutes — page will update automatically.</p></div>'
+                '<p class="text-cyan-500 text-xs mt-0.5">Pulling tweets and profile data. This takes 2–5 minutes — progress shows in the top-right corner.</p></div>'
                 '</div>'
-                '<div hx-get="/scrape-progress" hx-trigger="every 3s" hx-swap="outerHTML transition:true"></div>'
             )
         else:
             scraping_card = (

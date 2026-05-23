@@ -55,7 +55,10 @@ def test_stale_running_row_gets_reconciled(db, make_user):
         sid = cur.fetchone()["id"]
     db.commit()
     reconcile_stale()
-    row = current_for_user(u["id"])
+    # Query directly — current_for_user hides old terminal sessions by design.
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM scrape_sessions WHERE id=%s", (sid,))
+        row = cur.fetchone()
     assert row["id"] == sid
     assert row["status"] == "failed"
     assert "heartbeat timeout" in (row.get("error_log") or "")

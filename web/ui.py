@@ -174,7 +174,8 @@ def header_html(days=0, active_name="", is_admin=False, show_insights=True):
         'hx-get="/queue-status" hx-trigger="load, every 8s" hx-swap="outerHTML transition:true">'
         '</span>'
         '</div></div></nav>'
-        '<div id="scrape-progress" hx-get="/scrape-progress" '
+        '<div id="scrape-progress" class="fixed top-14 right-4 z-50 w-80 pointer-events-none" '
+        'hx-get="/scrape-progress" '
         'hx-trigger="load delay:0.5s, every 3s" hx-swap="outerHTML transition:true"></div>'
         '<main class="mx-auto w-full px-4 sm:px-6 lg:px-8 max-w-6xl xl:max-w-7xl 2xl:max-w-[1600px] py-8">'
     )

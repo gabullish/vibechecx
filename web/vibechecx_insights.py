@@ -1601,7 +1601,8 @@ def _fire_timely_angles_bg(scope_type: str, scope_id: int, period: str, insight:
 
 def cached_insights(scope_type, scope_id, period="7d",
                     max_age_minutes: int | None = None, force: bool = False,
-                    generate_if_missing: bool = False):
+                    generate_if_missing: bool = False,
+                    user_id: int | None = None, display_name: str | None = None):
     """Read-through cache for a (scope, period) insight.
 
     TOKEN-SAFETY CONTRACT (do not break):
@@ -1656,9 +1657,11 @@ def cached_insights(scope_type, scope_id, period="7d",
                 (scope_type, scope_id, period),
             )
             cur.execute(
-                "INSERT INTO insights_cache (scope_type,scope_id,period,generated_at,insights,provider) "
-                "VALUES (%s,%s,%s,NOW(),%s,%s)",
-                (scope_type, scope_id, period, json.dumps(insights), provider_or_error),
+                "INSERT INTO insights_cache "
+                "(scope_type,scope_id,period,generated_at,insights,provider,user_id,display_name) "
+                "VALUES (%s,%s,%s,NOW(),%s,%s,%s,%s)",
+                (scope_type, scope_id, period, json.dumps(insights), provider_or_error,
+                 user_id, display_name),
             )
         # Invalidate the prior timely angles so we search fresh on next view.
         cache_timely_angles(scope_type, scope_id, period, None)
