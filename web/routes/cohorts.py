@@ -924,20 +924,20 @@ def cohort_leaderboard(
         "Replies ÷ (replies + originals). "
         "High = mostly conversational; low = mostly broadcasting original content."
     )
-    posts_tip = "Total non-retweet posts published during the period."
+    posts_tip = "Originals + replies published during the period. Retweets excluded."
     followers_tip = "Follower count at the time of last scrape."
     likes_tip = "Total likes earned during the period. Pure absolute — who moved the most engagement."
     views_tip = "Total impressions during the period. Who reached the most eyeballs in absolute terms."
     lpp_tip = (
-        "Likes ÷ posts. Proportional — audience-size neutral. "
+        "Likes ÷ (originals + replies). Proportional — audience-size neutral. "
         "One great post with 500 likes beats 10 posts with 50 likes each."
     )
     vpp_tip = (
-        "Views ÷ posts. Proportional reach per piece of content. "
+        "Views ÷ (originals + replies). Proportional reach per piece of content. "
         "Rewards quality over quantity; not affected by follower count."
     )
-    amp_tip = "Retweets per post. Measures how shareable content is."
-    conv_tip = "Replies received per post. Measures how much conversation content sparks."
+    amp_tip = "Retweets received ÷ (originals + replies). Measures how shareable content is."
+    conv_tip = "Replies received ÷ (originals + replies). Measures how much conversation content sparks."
     rpf_tip = "Total views divided by follower count. Reach relative to audience size."
 
     combo_header = (

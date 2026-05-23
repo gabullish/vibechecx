@@ -190,19 +190,19 @@ def dash(r: Request, tag: str = "", days: int = 0, sort: str = "likes"):
         f'<div class="bg-gray-900 rounded-xl p-5 border border-gray-800 min-w-0">'
         f'<div class="text-3xl font-bold text-emerald-400" title="{fmt(stats["t"])}">{fmt_compact(stats["t"])}</div>'
         f'<div class="text-sm text-gray-400 whitespace-normal">'
-        + tip("Tweets", "All posts scraped in this period. Originals = your own content. Replies = threads you joined. Retweets are tracked separately and excluded from most engagement metrics.", with_icon=False)
+        + tip("Tweets", "All scraped posts: originals (your content) + replies (threads you joined) + retweets (shares). Most engagement metrics use originals + replies only — retweets are excluded since you didn't author them.", with_icon=False)
         + f'</div>'
         f'<div class="text-xs text-gray-400 mt-1 break-words">{fmt(stats["orig"])} originals · {fmt(stats["re"])} replies · {fmt(stats["rt"])} retweets</div></div>'
         f'<div class="bg-gray-900 rounded-xl p-5 border border-gray-800 min-w-0">'
         f'<div class="text-3xl font-bold text-pink-400" title="{fmt(stats["tl"])}">{fmt_compact(stats["tl"])}</div>'
         f'<div class="text-sm text-gray-400 whitespace-normal">'
-        + tip("Earned Likes", "Likes accumulated on your content during this period, split between original posts and replies. Retweets excluded — you didn't author them.", with_icon=False)
+        + tip("Earned Likes", "Likes on your authored content (originals + replies). Retweets excluded — you didn't write them.", with_icon=False)
         + f'</div>'
         f'<div class="text-xs text-gray-400 mt-1 break-words">posts ❤ {fmt(stats["pl"])} · replies ❤ {fmt(stats["rl"])}</div></div>'
         f'<div class="bg-gray-900 rounded-xl p-5 border border-gray-800 min-w-0">'
         f'<div class="text-3xl font-bold text-blue-400" title="{fmt(stats["tv"])}">{fmt_compact(stats["tv"])}</div>'
         f'<div class="text-sm text-gray-400 whitespace-normal">'
-        + tip("Total Views", "Impressions on your content, split between original posts and replies. Retweets excluded. High views ÷ low likes = reach without resonance.", with_icon=False)
+        + tip("Total Views", "Impressions on your authored content (originals + replies). Retweets excluded. High views ÷ low likes = reach without resonance.", with_icon=False)
         + f'</div>'
         f'<div class="text-xs text-gray-400 mt-1 break-words">posts 👁 {fmt(stats["pv"])} · replies 👁 {fmt(stats["rv"])}</div></div>'
         f'<div class="bg-gray-900 rounded-xl p-5 border border-gray-800 min-w-0">'
@@ -523,7 +523,7 @@ def profile_view(r: Request, days: int = 0):
         "</div>"
         "<div class='mt-4 grid grid-cols-2 gap-3 text-center text-sm'>"
         f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-emerald-400' title='{fmt(s['t'])}'>{fmt_compact(s['t'])}</div><div class='text-xs text-gray-400'>"
-        + tip("total posts", "All posts in the selected period including originals, replies, and retweets.", with_icon=False)
+        + tip("total posts", "All scraped posts in the period: originals + replies + retweets.", with_icon=False)
         + "</div></div>"
         f"<div class='bg-gray-800/50 rounded-xl p-3 min-w-0'><div class='text-2xl font-bold text-cyan-400' title='{fmt(s['orig'])}'>{fmt_compact(s['orig'])}</div><div class='text-xs text-gray-400'>"
         + tip("originals", "Tweets you authored — not replies to others and not retweets. Your original content output.", with_icon=False)
