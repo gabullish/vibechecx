@@ -240,12 +240,19 @@ def scrape_progress(r: Request):
     hb_age = _heartbeat_age(row)
 
     if ss_is_live(row):
-        # Stall detection: amber >30s, red border + banner >90s
+        # Stall detection. Cohort scrapes (batch_scraping) rotate between
+        # many accounts; heartbeat gaps of 60–90s are normal between
+        # accounts. Use looser thresholds for that phase so we don't
+        # falsely flag a healthy multi-account scrape as stalled.
+        if phase == "batch_scraping":
+            amber_thresh, red_thresh = 90, 240
+        else:
+            amber_thresh, red_thresh = 30, 90
         stall_color = "text-cyan-100"
         stall_banner = ""
         card_border = "border-cyan-800/60"
         card_bg = "bg-cyan-950/30"
-        if hb_age is not None and hb_age > 90:
+        if hb_age is not None and hb_age > red_thresh:
             stall_color = "text-red-300"
             card_border = "border-amber-700"
             card_bg = "bg-amber-950/40"
@@ -254,7 +261,7 @@ def scrape_progress(r: Request):
                 f'⚠ Stalled — last update {hb_age}s ago'
                 '</div>'
             )
-        elif hb_age is not None and hb_age > 30:
+        elif hb_age is not None and hb_age > amber_thresh:
             stall_color = "text-amber-300"
 
         eta = _PHASE_ETA.get(phase.split(" ")[0].split("@")[0].strip() or phase, 60)
@@ -294,6 +301,9 @@ def scrape_progress(r: Request):
                   "Total tweets collected so far in this scrape session.",
                   with_icon=False)
             + tip(f'<div><span class="{stall_color} font-mono">{hb_age if hb_age is not None else "—"}{("s" if hb_age is not None else "")}</span> since update</div>',
+                  ("Seconds since the last progress heartbeat. Cohort scrapes "
+                   "rotate between accounts, so 60–90s gaps are normal — only "
+                   "flagged as stalled past 4 minutes.") if phase == "batch_scraping" else
                   "Seconds since the last progress heartbeat. Over 30s may indicate the scraper hit a rate-limit or stalled.",
                   with_icon=False)
             + '</div>'

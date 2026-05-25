@@ -553,7 +553,9 @@ def cohort_det(cid: int, r: Request, days: int = 0):
         f'<button class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 transition" '
         f'hx-post="/cohort/{cid}/share-token" hx-target="#share-section" hx-swap="innerHTML">🔗 Generate share link</button>'
     )
-    member_html = f'<div id="cohort-settings-members" class="space-y-2">{cards}</div>'
+    # Note: the member cards live in the Members tab below (id=cohort-settings-members).
+    # Add/remove htmx swaps target that div by ID — works even when this settings
+    # panel is on screen and the Members tab is hidden.
     settings = (
         '<div id="cohort-settings" class="bg-gray-900 rounded-xl border border-gray-800 p-5 mb-6">'
         '<div class="flex items-center justify-between mb-4">'
@@ -572,7 +574,6 @@ def cohort_det(cid: int, r: Request, days: int = 0):
         'class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm flex-1">'
         '<button type="submit" class="bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg px-3 py-1.5 text-xs">Set</button>'
         '</form></div><div id="pfp-status"></div>'
-        f'{member_html}'
         f'<form hx-post="/cohort/{cid}/add" hx-target="#cohort-settings-members" hx-swap="innerHTML" class="flex gap-2 mt-4">'
         '<input type="text" name="handle" placeholder="+ add handle" '
         'class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm flex-1">'
@@ -633,6 +634,7 @@ def cohort_det(cid: int, r: Request, days: int = 0):
     )
     return header_html(days, c["name"], is_admin=user.get("is_admin", False)) + (
         f'{cvibe_html}'
+        f'{settings}'
         f'<div class="flex items-center gap-2 mb-4 bg-gray-900 rounded-xl border border-gray-800 p-3">'
         f'<span class="text-xs font-semibold text-gray-400">✨</span>'
         f'{_period_links}'
@@ -645,7 +647,7 @@ def cohort_det(cid: int, r: Request, days: int = 0):
         'class="px-3 py-1.5 text-xs rounded-t transition">📊 Leaderboard</button>'
         '</div>'
         f'<div x-show="tab===\'members\'">'
-        f'<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{cards}</div>'
+        f'<div id="cohort-settings-members" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{cards}</div>'
         '</div>'
         f'<div x-show="tab===\'leaderboard\'">'
         f'<div id="tab-leaderboard" '
