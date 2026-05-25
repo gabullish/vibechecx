@@ -100,7 +100,7 @@ async def _global_error_handler(request: Request, exc: Exception):
         f"<h2>Something went wrong.</h2>"
         f"<p style='color:#f87171;background:#1e1e1e;padding:1rem;border-radius:8px;font-family:monospace;font-size:13px;'>{msg}</p>"
         f"<details><summary style='cursor:pointer;color:#60a5fa;margin-top:1rem;'>Full traceback</summary>"
-        f"<pre style='background:#1e1e1e;padding:1rem;border-radius:8px;overflow:auto;font-size:12px;color:#ccc;margin-top:0.5rem;'>{_html.escape(tb[:2000])}</pre>"
+        f"<pre style='background:#1e1e1e;padding:1rem;border-radius:8px;overflow:auto;font-size:12px;color:#ccc;margin-top:0.5rem;'>{_html.escape(tb[:8000])}</pre>"
         f"</details></body></html>",
         status_code=500,
     )

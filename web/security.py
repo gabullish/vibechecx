@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vibechecx_config import DB_CONFIG as _DB  # noqa: E402
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 
 logger = logging.getLogger("vibechecx.security")
@@ -51,12 +51,31 @@ _SECURITY_HEADERS = {
 }
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        for k, v in _SECURITY_HEADERS.items():
-            response.headers[k] = v
-        return response
+class SecurityHeadersMiddleware:
+    """Pure ASGI middleware that stamps security headers onto every
+    response. Previously used Starlette's BaseHTTPMiddleware, but that
+    class has a known regression on Python 3.14 where call_next() can
+    return None during exception handling — which then surfaced as a
+    cryptic global ``'NoneType' object has no attribute 'headers'``
+    error masking the real exception. Pure ASGI sidesteps that whole
+    code path and is measurably faster (no extra task hop)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for k, v in _SECURITY_HEADERS.items():
+                    headers[k] = v
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 # ── Login rate limiting ───────────────────────────────────────────────
