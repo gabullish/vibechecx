@@ -84,6 +84,7 @@ logging.basicConfig(
 
 from web.queue_worker import start as _start_queue_worker  # noqa: E402
 from web.patrol_scheduler import start_patrol_scheduler as _start_patrol_scheduler  # noqa: E402
+from web.metric_refresh_worker import start as _start_metric_refresh_worker  # noqa: E402
 import traceback as _traceback
 import logging as _logging
 
@@ -128,6 +129,7 @@ async def _startup():
         fcntl.flock(_queue_worker_lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
         _start_queue_worker()
         _start_patrol_scheduler()
+        _start_metric_refresh_worker()
     except BlockingIOError:
         _queue_worker_lockfile = None  # another worker already owns the queue
 
