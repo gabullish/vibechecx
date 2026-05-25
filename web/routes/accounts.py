@@ -264,6 +264,72 @@ def account_page(handle: str, r: Request, days: int = 365):
         + '</span>'
         '</div></div></div>'
     )
+    # Media performance — does this account's videos beat their photos?
+    # GROUP BY media type, count distinct tweets containing it, avg likes/views.
+    # Filtered to non-retweets in the same window as the rest of the page.
+    media_perf = q(
+        f"""
+        SELECT
+            m.media_type,
+            COUNT(DISTINCT t.tweet_id)::int AS tweets,
+            COALESCE(AVG(t.likes), 0)::int AS avg_likes,
+            COALESCE(AVG(t.views), 0)::int AS avg_views
+        FROM media m
+        JOIN tweets t ON t.tweet_id = m.tweet_id
+        WHERE t.author_account_id = %s
+          AND NOT t.is_retweet
+          AND t.created_at > NOW() - INTERVAL '{int(days)} days'
+          AND m.media_type IN ('photo', 'video', 'animated_gif')
+        GROUP BY m.media_type
+        """,
+        (aid,),
+    )
+    media_html = ""
+    if media_perf:
+        _icons = {"photo": "📷", "video": "🎥", "animated_gif": "🎞"}
+        _labels = {"photo": "Photos", "video": "Videos", "animated_gif": "GIFs"}
+        # Rank media types by avg likes — winner gets the green highlight.
+        best_type = max(media_perf, key=lambda r: r["avg_likes"])["media_type"]
+        # Stable display order: photo → video → gif (even if some are missing)
+        order = ("photo", "video", "animated_gif")
+        rows_by_type = {r["media_type"]: r for r in media_perf}
+        cells = ""
+        for mt in order:
+            r = rows_by_type.get(mt)
+            if not r:
+                cells += (
+                    f'<div class="text-center text-gray-600">'
+                    f'<div class="text-2xl mb-1">{_icons[mt]}</div>'
+                    f'<div class="text-[10px]">{_labels[mt]}</div>'
+                    f'<div class="text-[10px]">—</div></div>'
+                )
+                continue
+            is_best = (mt == best_type and len(media_perf) > 1)
+            label_cls = "text-emerald-400" if is_best else "text-gray-300"
+            crown = ' 👑' if is_best else ''
+            cells += (
+                f'<div class="text-center">'
+                f'<div class="text-2xl mb-1">{_icons[mt]}</div>'
+                f'<div class="text-[10px] text-gray-400">{_labels[mt]}{crown} · {fmt(r["tweets"])} tweets</div>'
+                f'<div class="text-sm font-semibold {label_cls}">❤ {fmt(r["avg_likes"])}'
+                f'<span class="text-gray-500 font-normal text-[10px]"> avg</span></div>'
+                f'<div class="text-[10px] text-blue-400">👁 {fmt(r["avg_views"])}'
+                f'<span class="text-gray-500"> avg</span></div>'
+                f'</div>'
+            )
+        media_html = (
+            '<div class="max-w-4xl mx-auto mb-6">'
+            '<div class="bg-gray-900 rounded-xl border border-gray-800 p-4">'
+            '<h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">'
+            + tip(
+                "🎞 Media format performance",
+                "Average likes and views per tweet, grouped by attached media "
+                "type (photos, videos, GIFs). 👑 marks the best-performing "
+                "format by avg likes. Helps answer: should I post more videos?",
+            ) + '</h3>'
+            f'<div class="grid grid-cols-3 gap-4">{cells}</div>'
+            '</div></div>'
+        )
     # Vibe bar
     vibe_val, vibe_desc = _vibe("account", aid, f"{days}d")
     vibe_color = "bg-emerald-500" if vibe_val >= 65 else "bg-yellow-500" if vibe_val >= 40 else "bg-red-500"
@@ -352,6 +418,7 @@ def account_page(handle: str, r: Request, days: int = 365):
         f'<div class="flex gap-1 mb-4">{date_tabs}</div>'
         f'{stats_bar}'
         f'{perf_html}'
+        f'{media_html}'
         f'{vibe_html}'
         '<div class="mb-6">'
         '<button onclick="var b=document.getElementById(\'ai-insights-body\');var h=b.classList.toggle(\'hidden\');document.getElementById(\'ai-toggle-icon\').textContent=h?\'▶\':\'▼\';" '

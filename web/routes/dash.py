@@ -62,12 +62,18 @@ def dash(r: Request, tag: str = "", days: int = 0, sort: str = "likes"):
           (SELECT COALESCE(sum(views),0) FROM tweets WHERE author_account_id = ANY(%s) AND NOT is_retweet{period}) AS tv,
           (SELECT count(*) FROM media WHERE tweet_id IN
              (SELECT tweet_id FROM tweets WHERE author_account_id = ANY(%s){period})) AS mi,
+          (SELECT count(*) FROM media WHERE media_type = 'photo' AND tweet_id IN
+             (SELECT tweet_id FROM tweets WHERE author_account_id = ANY(%s){period})) AS mi_photo,
+          (SELECT count(*) FROM media WHERE media_type = 'video' AND tweet_id IN
+             (SELECT tweet_id FROM tweets WHERE author_account_id = ANY(%s){period})) AS mi_video,
+          (SELECT count(*) FROM media WHERE media_type = 'animated_gif' AND tweet_id IN
+             (SELECT tweet_id FROM tweets WHERE author_account_id = ANY(%s){period})) AS mi_gif,
           (SELECT COALESCE(sum(likes),0) FROM tweets WHERE author_account_id = ANY(%s) AND NOT is_retweet AND NOT is_reply{period}) AS pl,
           (SELECT COALESCE(sum(likes),0) FROM tweets WHERE author_account_id = ANY(%s) AND is_reply{period}) AS rl,
           (SELECT COALESCE(sum(views),0) FROM tweets WHERE author_account_id = ANY(%s) AND NOT is_retweet AND NOT is_reply{period}) AS pv,
           (SELECT COALESCE(sum(views),0) FROM tweets WHERE author_account_id = ANY(%s) AND is_reply{period}) AS rv
         """,
-        (account_ids,) * 11,
+        (account_ids,) * 14,
     )[0]
 
     recent = q(
@@ -209,7 +215,10 @@ def dash(r: Request, tag: str = "", days: int = 0, sort: str = "likes"):
         f'<div class="text-3xl font-bold text-cyan-400" title="{fmt(stats["mi"])}">{fmt_compact(stats["mi"])}</div>'
         f'<div class="text-sm text-gray-400 whitespace-normal">'
         + tip("Media Items", "Photos, videos, or GIFs attached to posts. Accounts with rich media typically see significantly higher view counts.", with_icon=False)
-        + f'</div></div>'
+        + f'</div>'
+        f'<div class="text-xs text-gray-400 mt-1 break-words">'
+        f'📷 {fmt(stats["mi_photo"])} · 🎥 {fmt(stats["mi_video"])} · 🎞 {fmt(stats["mi_gif"])}'
+        f'</div></div>'
         '</div>'
         f'{tag_banner}'
         '<div class="bg-gray-900 rounded-xl border border-gray-800 p-5">'
