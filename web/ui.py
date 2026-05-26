@@ -190,6 +190,9 @@ def header_html(days=0, active_name="", is_admin=False, show_insights=True):
         + f'<a href="/profiles" class="hover:text-white transition">Workspaces</a>'
         + ('<a href="/admin" class="hover:text-white transition">Admin</a>' if is_admin else '')
         + '<a href="/logout" class="text-gray-400 hover:text-gray-400 transition">logout</a>'
+        '<span id="freshness-chip" '
+        'hx-get="/freshness" hx-trigger="load, every 30s" hx-swap="outerHTML transition:true">'
+        '</span>'
         '<span id="queue-status-chip" '
         'hx-get="/queue-status" hx-trigger="load, every 8s" hx-swap="outerHTML transition:true">'
         '</span>'

@@ -190,6 +190,48 @@ def queue_status(r: Request):
     )
 
 
+@router.get("/freshness", response_class=HTMLResponse)
+def freshness(r: Request):
+    """Tiny data-freshness chip for the header. Shows time since the last
+    completed scrape session for the active user (or globally if no user)
+    plus a live dot if the metric-refresh worker has updated anything in
+    the past 5 minutes. Two cheap MAX() queries — no new state needed."""
+    user = get_user(r)
+    user_clause = ""
+    params: tuple = ()
+    if user:
+        user_clause = " WHERE user_id=%s AND status='completed'"
+        params = (user["id"],)
+    else:
+        user_clause = " WHERE status='completed'"
+    rows = q(
+        f"SELECT MAX(ended_at) AS last_scrape FROM scrape_sessions{user_clause}",
+        params,
+    )
+    last_scrape = rows[0]["last_scrape"] if rows else None
+    # Global liveness — if anything was refreshed in the last 5 min, the
+    # worker is alive. Doesn't need to be user-scoped (it's a system signal).
+    live_row = q(
+        "SELECT MAX(metrics_refreshed_at) AS m FROM tweets "
+        "WHERE metrics_refreshed_at > NOW() - INTERVAL '5 minutes' LIMIT 1"
+    )
+    is_live = bool(live_row and live_row[0].get("m"))
+    scrape_part = (
+        f'<span class="text-gray-300">📊 scraped {rel_time(last_scrape)}</span>'
+        if last_scrape else '<span class="text-gray-500">📊 no scrapes yet</span>'
+    )
+    live_part = (
+        '<span class="text-emerald-400" title="metric refresh worker updated tweets in the last 5 min">⚡ live</span>'
+        if is_live else
+        '<span class="text-gray-500" title="metric refresh worker idle">⚡ idle</span>'
+    )
+    return HTMLResponse(
+        f'<span id="freshness-chip" '
+        f'class="text-[11px] px-2 py-0.5 rounded-full bg-gray-800 border border-gray-700 '
+        f'flex items-center gap-1.5">{scrape_part} · {live_part}</span>'
+    )
+
+
 @router.get("/scrape-progress", response_class=HTMLResponse)
 def scrape_progress(r: Request):
     user = get_user(r)

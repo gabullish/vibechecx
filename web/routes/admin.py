@@ -119,6 +119,124 @@ def _process_section() -> str:
     )
 
 
+def _health_section() -> str:
+    """At-a-glance health for the four moving pieces: queue worker,
+    metric-refresh worker, cookies, and the DB. Pure read — leans on
+    existing data so we don't need a new heartbeats table:
+      • queue worker  → most recent scrape_session started (means it ran)
+                        + a 'running' row older than 1h is unhealthy
+      • refresh worker → MAX(metrics_refreshed_at) (worker writes every tick)
+      • cookies        → list cookie files in COOKIE_DIR + mtimes
+      • DB             → round-trip latency of one trivial SELECT
+    """
+    from vibechecx_config import COOKIE_DIR
+    import time as _t
+
+    # --- queue worker
+    qr = q(
+        "SELECT MAX(started_at) AS last_start, "
+        "       (SELECT MIN(started_at) FROM scrape_queue WHERE status='running') AS oldest_running "
+        "  FROM scrape_sessions"
+    )
+    last_q = qr[0].get("last_start") if qr else None
+    oldest_running = qr[0].get("oldest_running") if qr else None
+    # Worker is "alive" if anything started in the last 24h. "Stuck" if
+    # a 'running' row is older than 1h — likely a coordinator crash that
+    # the queue worker never reconciled.
+    if oldest_running:
+        from datetime import datetime, timezone
+        age_min = (datetime.now(timezone.utc) - oldest_running).total_seconds() / 60
+        if age_min > 60:
+            q_status = ("text-amber-300", f"⚠ stuck — running {int(age_min)}m")
+        else:
+            q_status = ("text-emerald-400", f"running for {int(age_min)}m")
+    elif last_q:
+        q_status = ("text-emerald-400", f"idle — last ran {rel_time(last_q)}")
+    else:
+        q_status = ("text-gray-500", "no scrapes recorded")
+
+    # --- metric refresh worker
+    mr = q("SELECT MAX(metrics_refreshed_at) AS m FROM tweets")
+    last_mr = mr[0].get("m") if mr else None
+    if last_mr:
+        from datetime import datetime, timezone
+        mr_age = (datetime.now(timezone.utc) - last_mr).total_seconds()
+        # Worker stamps metrics_refreshed_at only when it finds work, so a
+        # quiet system (everything already fresh) naturally extends the gap.
+        # Don't flag yellow/red just because the worker is healthy and idle —
+        # only when the gap is so long the worker has clearly died.
+        if mr_age < 3600:
+            mr_status = ("text-emerald-400", f"alive — {rel_time(last_mr)}")
+        elif mr_age < 86400:
+            mr_status = ("text-gray-400", f"idle — {rel_time(last_mr)}")
+        else:
+            mr_status = ("text-red-400", f"⚠ stalled — {rel_time(last_mr)}")
+    else:
+        mr_status = ("text-gray-500", "never run")
+
+    # --- cookies
+    cookie_rows = []
+    try:
+        for fname in sorted(os.listdir(COOKIE_DIR)):
+            if not fname.endswith(".json"):
+                continue
+            path = os.path.join(COOKIE_DIR, fname)
+            try:
+                age_days = (_t.time() - os.path.getmtime(path)) / 86400
+                size = os.path.getsize(path)
+                color = "text-emerald-400" if age_days < 3 else "text-amber-300" if age_days < 7 else "text-red-400"
+                cookie_rows.append((fname, color, f"{age_days:.1f}d old · {size // 1024}KB"))
+            except OSError:
+                continue
+    except FileNotFoundError:
+        pass
+    cookie_inner = (
+        "".join(
+            f"<div class='flex justify-between text-[11px]'>"
+            f"<span class='text-gray-400'>{html.escape(n)}</span>"
+            f"<span class='{c}'>{s}</span></div>"
+            for n, c, s in cookie_rows
+        ) if cookie_rows else
+        "<div class='text-[11px] text-gray-500'>no cookies found</div>"
+    )
+
+    # --- DB latency
+    t0 = _t.time()
+    try:
+        q("SELECT 1 AS ok")
+        db_ms = (_t.time() - t0) * 1000
+        if db_ms < 100:
+            db_status = ("text-emerald-400", f"{db_ms:.0f}ms")
+        elif db_ms < 500:
+            db_status = ("text-amber-300", f"{db_ms:.0f}ms")
+        else:
+            db_status = ("text-red-400", f"{db_ms:.0f}ms — slow")
+    except Exception as e:
+        db_status = ("text-red-400", f"⚠ {str(e)[:40]}")
+
+    def _card(title: str, status: tuple, sub: str = "") -> str:
+        color, label = status
+        return (
+            "<div class='bg-gray-900 rounded-xl border border-gray-800 p-4'>"
+            f"<div class='text-[10px] uppercase tracking-wider text-gray-500'>{title}</div>"
+            f"<div class='text-sm font-semibold mt-1 {color}'>{label}</div>"
+            + (f"<div class='text-[10px] text-gray-500 mt-1'>{sub}</div>" if sub else "")
+            + "</div>"
+        )
+
+    return (
+        "<div class='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3'>"
+        + _card("Queue worker", q_status)
+        + _card("Metric refresh", mr_status)
+        + "<div class='bg-gray-900 rounded-xl border border-gray-800 p-4'>"
+        + "<div class='text-[10px] uppercase tracking-wider text-gray-500'>Cookies</div>"
+        + f"<div class='mt-2 space-y-1'>{cookie_inner}</div>"
+        + "</div>"
+        + _card("DB latency", db_status)
+        + "</div>"
+    )
+
+
 def _system_section() -> str:
     try:
         import psutil
@@ -324,6 +442,9 @@ def admin_page(r: Request):
         "<h1 class='text-xl font-semibold'>Admin</h1>"
         f"<span class='text-xs text-gray-500'>{len(users)} users</span>"
         "</div>"
+
+        "<h2 class='text-xs font-semibold text-gray-500 uppercase mb-3'>Health</h2>"
+        f"<div class='mb-6'>{_health_section()}</div>"
 
         "<h2 class='text-xs font-semibold text-gray-500 uppercase mb-3'>System</h2>"
         f"<div class='mb-6'>{_system_section()}</div>"
