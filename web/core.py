@@ -37,21 +37,49 @@ def q(sql, params=None):
         conn.close()
 
 
-def _as_request(r):
-    """Return ``r`` if it is already a Starlette Request, otherwise wrap an
-    ASGI scope dict into one.
+import contextvars as _cv
 
-    Why: on Python 3.14 + the current FastAPI/Starlette pinned on Render,
-    sync endpoints declared as ``def route(... r: Request, ...)`` sometimes
-    receive the raw ASGI scope dict instead of a constructed Request
-    object. Reading ``r.headers`` / ``r.cookies`` then crashes with
-    ``'dict' object has no attribute 'headers'`` — a global, hard-to-trace
-    failure mode. Wrapping here means routes never have to think about it.
+# Module-level contextvar that holds the in-flight Starlette Request.
+# Set by RequestContextMiddleware on every HTTP request; reset on exit.
+# contextvars propagate through anyio.to_thread.run_sync (which FastAPI
+# uses for sync endpoints), so this works for every route regardless of
+# whether it's async def or plain def.
+current_request: "_cv.ContextVar[object | None]" = _cv.ContextVar(
+    "vibechecx_current_request", default=None
+)
+
+
+def _as_request(r):
+    """Return a real Starlette Request, no matter what FastAPI handed us.
+
+    On Python 3.14 + the FastAPI/Starlette pinned on Render, sync endpoints
+    declared as ``def route(... r: Request, ...)`` sometimes receive:
+      • the real Request (happy path)
+      • the raw ASGI scope dict (older variant of the same bug)
+      • an empty dict ``{}`` (FastAPI treats Request as a body field when
+        it fails to recognise the annotation, then injects an empty body)
+
+    The empty-dict case is unrecoverable from ``r`` alone — there's no
+    scope to wrap. So we fall back to a contextvar that the request
+    middleware sets at the very start of every HTTP request, which holds
+    the canonical Request for the current task.
     """
-    if isinstance(r, dict):
+    # Fast path — already a Starlette Request (or compatible duck type).
+    if hasattr(r, "headers") and hasattr(r, "cookies"):
+        return r
+    # ASGI scope dict — wrap it.
+    if isinstance(r, dict) and r.get("type") in ("http", "websocket"):
         from starlette.requests import Request as _Req
         return _Req(r)
-    return r
+    # Garbage (empty dict / None / wrong type) — pull from contextvar.
+    req = current_request.get()
+    if req is not None:
+        return req
+    # Truly nothing — raise a clear error instead of hiding it.
+    raise RuntimeError(
+        f"_as_request: could not resolve a Request "
+        f"(got {type(r).__name__}={r!r}, contextvar empty)"
+    )
 
 
 def get_user(r):

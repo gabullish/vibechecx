@@ -68,6 +68,15 @@ class SecurityHeadersMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Stash the canonical Request in a contextvar so any route can
+        # recover it even when FastAPI's parameter binding for sync
+        # endpoints decays on Python 3.14 (passes {} for r: Request).
+        # contextvars propagate through anyio.to_thread.run_sync, which
+        # is what FastAPI uses for sync endpoints — so this is safe for
+        # every code path.
+        from web.core import current_request
+        token = current_request.set(Request(scope, receive=receive, send=send))
+
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
@@ -75,7 +84,10 @@ class SecurityHeadersMiddleware:
                     headers[k] = v
             await send(message)
 
-        await self.app(scope, receive, send_with_headers)
+        try:
+            await self.app(scope, receive, send_with_headers)
+        finally:
+            current_request.reset(token)
 
 
 # ── Login rate limiting ───────────────────────────────────────────────
