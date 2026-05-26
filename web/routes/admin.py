@@ -500,9 +500,13 @@ def admin_insights_library(r: Request):
     rows = q(
         """
         SELECT ic.id, ic.display_name, ic.scope_type, ic.scope_id,
-               ic.period, ic.provider, ic.generated_at, u.username
+               ic.period, ic.provider, ic.generated_at, u.username,
+               c.name      AS cohort_name,
+               a.username  AS account_username
           FROM insights_cache ic
-          LEFT JOIN users u ON u.id = ic.user_id
+          LEFT JOIN users    u ON u.id = ic.user_id
+          LEFT JOIN cohorts  c ON ic.scope_type = 'cohort'  AND c.id = ic.scope_id
+          LEFT JOIN accounts a ON ic.scope_type = 'account' AND a.id = ic.scope_id
          ORDER BY ic.generated_at DESC
          LIMIT 200
         """
@@ -510,20 +514,28 @@ def admin_insights_library(r: Request):
     if not rows:
         return "<p class='text-gray-500 text-xs text-center py-4'>No insights cached yet.</p>"
 
+    import re as _re
     def _row(row):
-        name = html.escape(row.get("display_name") or f"{row['scope_type']} #{row['scope_id']}")
+        raw = row.get("display_name") or (
+            row.get("cohort_name") if row["scope_type"] == "cohort"
+            else (f"@{row['account_username']}" if row.get("account_username") else None)
+        )
+        clean = _re.sub(r"\s*[·•|]\s*\d+[dhw]\s*$", "", raw).strip() if raw else f"{row['scope_type']} {row['scope_id']}"
+        name = html.escape(clean)
         owner = html.escape(row.get("username") or "—")
-        age = rel_time(row["generated_at"]) if row.get("generated_at") else "?"
+        gen_at = row.get("generated_at")
+        age = rel_time(gen_at) if gen_at else "?"
+        date_str = gen_at.strftime("%Y-%m-%d") if hasattr(gen_at, "strftime") else "—"
         provider = html.escape((row.get("provider") or "")[:20])
         dl_url = f"/insights/library/download/{row['id']}?format=md"
         dl_json_url = f"/insights/library/download/{row['id']}?format=json"
         return (
             "<tr class='border-b border-gray-800 text-sm'>"
             f"<td class='py-2 px-3 text-gray-400'>{row['scope_type']}</td>"
-            f"<td class='py-2 px-3 font-medium text-gray-200'>{name}</td>"
+            f"<td class='py-2 px-3 font-medium text-emerald-300'>{name}</td>"
             f"<td class='py-2 px-3 text-gray-400'>{row['period']}</td>"
             f"<td class='py-2 px-3 text-gray-400'>{owner}</td>"
-            f"<td class='py-2 px-3 text-gray-500'>{age}</td>"
+            f"<td class='py-2 px-3 text-gray-500' title='{age}'>{date_str}</td>"
             f"<td class='py-2 px-3 text-gray-500 text-xs'>{provider}</td>"
             f"<td class='py-2 px-3'>"
             f"<a href='{dl_url}' class='text-emerald-400 hover:underline text-xs mr-2'>↓ MD</a>"

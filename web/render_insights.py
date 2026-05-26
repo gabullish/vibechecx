@@ -650,6 +650,29 @@ def _insight_to_markdown(insight: dict, scope_display: str, period: str,
     return "\n".join(lines) + "\n"
 
 
+def insight_filename_base(display: str, period: str, generated_at=None) -> str:
+    """Build a self-describing filename:
+        vibechecx_<scope-slug>_<period>_<YYYY-MM-DD>
+
+    Strips a trailing ' · 7d' / ' · 30d' from the display label so the
+    period isn't duplicated, lowercases + hyphenates for filesystem-safe
+    output, and stamps the generation date so users can tell snapshots
+    apart at a glance.
+
+    Examples
+        'Solflare Affiliates · 30d', '30d', 2026-05-26
+            → 'vibechecx_solflare-affiliates_30d_2026-05-26'
+        '@solgab · 7d',              '7d',  2026-05-26
+            → 'vibechecx_solgab_7d_2026-05-26'
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    cleaned = re.sub(r"\s*[·•|]\s*\d+[dhw]\s*$", "", display or "").strip().lstrip("@")
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", cleaned).strip("-").lower()[:40] or "insight"
+    when = generated_at or _dt.now(_tz.utc)
+    date = when.strftime("%Y-%m-%d") if hasattr(when, "strftime") else str(when)[:10]
+    return f"vibechecx_{slug}_{period}_{date}"
+
+
 def _insight_export_response(scope_type: str, scope_id: int,
                              scope_display: str, period: str, fmt: str):
     """Shared handler for both account + cohort insight export."""
@@ -661,8 +684,7 @@ def _insight_export_response(scope_type: str, scope_id: int,
                     f"Generate one first.",
             status_code=404, media_type="text/plain",
         )
-    safe_slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", scope_display.lstrip("@"))[:40]
-    filename_base = f"vibechecx_{safe_slug}_{period}"
+    filename_base = insight_filename_base(scope_display, period)
     if fmt == "md":
         body = _insight_to_markdown(insight, scope_display, period, provider)
         return Response(
