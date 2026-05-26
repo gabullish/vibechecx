@@ -126,15 +126,20 @@ def insights_library(r: Request):
         #   1) explicit display_name (current pipeline writes one)
         #   2) cohort name from join (for old cohort rows pre-display_name)
         #   3) @username from join (for old account rows)
-        #   4) "<scope> <id>" fallback (orphaned row — scope deleted)
+        #   4) "🪦 deleted cohort #N" / "🪦 deleted account #N" — true orphans
         # Strip the trailing ' · 7d' / ' · 30d' if present — period gets
         # its own column so the duplication is just noise.
         raw = row.get("display_name") or (
             row.get("cohort_name") if row["scope_type"] == "cohort"
             else (f"@{row['account_username']}" if row.get("account_username") else None)
         )
-        name = re.sub(r"\s*[·•|]\s*\d+[dhw]\s*$", "", raw).strip() if raw else f"{row['scope_type']} {row['scope_id']}"
-        name_safe = html.escape(name)
+        if raw:
+            name = re.sub(r"\s*[·•|]\s*\d+[dhw]\s*$", "", raw).strip()
+            name_safe = html.escape(name)
+        else:
+            # Orphan — scope was deleted. Mark visibly so user knows.
+            scope_label = "cohort" if row["scope_type"] == "cohort" else "account"
+            name_safe = f'<span class="text-gray-500">🪦 deleted {scope_label} #{row["scope_id"]}</span>'
         provider = row.get("provider") or "?"
         gen_at = row.get("generated_at")
         age = rel_time(gen_at) if gen_at else "?"

@@ -69,7 +69,15 @@ DB_CONFIG["host"], DB_CONFIG["port"], DB_CONFIG["user"] = _resolve_supabase_host
 
 SUPABASE_DB_CONFIG: dict | None = None
 _supabase_host = _env("SUPABASE_DB_HOST", "")
-if _supabase_host:
+_supabase_password = _env("SUPABASE_DB_PASSWORD", "")
+# Hard kill-switch: VIBECHECX_DISABLE_SUPABASE=1 turns the dual-write off
+# regardless of any other env. Defaults to enabled — but only attempts
+# the connection when BOTH host and password are non-empty. Previously
+# just the host was checked, so empty/expired credentials in
+# /etc/environment would slip through and fill every coordinator log
+# with 'Tenant or user not found' warnings on every query.
+_supabase_disabled = _env("VIBECHECX_DISABLE_SUPABASE", "").lower() in ("1", "true", "yes")
+if _supabase_host and _supabase_password and not _supabase_disabled:
     _supabase_port = int(_env("SUPABASE_DB_PORT", "5432"))
     _supabase_user = _env("SUPABASE_DB_USER", "postgres")
     _supabase_host, _supabase_port, _supabase_user = _resolve_supabase_host(
@@ -80,7 +88,7 @@ if _supabase_host:
         "port": _supabase_port,
         "dbname": _env("SUPABASE_DB_NAME", "postgres"),
         "user": _supabase_user,
-        "password": _env("SUPABASE_DB_PASSWORD", ""),
+        "password": _supabase_password,
     }
 
 

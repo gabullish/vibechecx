@@ -382,6 +382,22 @@ def admin_page(r: Request):
         )
         scope = html.escape(row.get("target_handle") or f'cohort #{row.get("cohort_id")}' or "?")
         when = rel_time(row["created_at"]) if row.get("created_at") else "?"
+        # Action buttons: cancel (always available for pending/running),
+        # bump-to-front (pending only — pointless on the row already running).
+        cancel_btn = (
+            f"<button hx-post='/admin/queue/{row['id']}/cancel' "
+            f"hx-confirm='Cancel this scrape?' "
+            f"hx-target='closest tr' hx-swap='outerHTML' "
+            f"class='text-[10px] px-2 py-0.5 rounded bg-red-900/40 text-red-300 "
+            f"hover:bg-red-800 transition'>✕ cancel</button>"
+        )
+        front_btn = (
+            (f"<button hx-post='/admin/queue/{row['id']}/front' "
+             f"hx-target='closest tbody' hx-swap='outerHTML' "
+             f"class='text-[10px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-300 "
+             f"hover:bg-emerald-800 transition ml-1'>↑ front</button>")
+            if row["status"] == "pending" else ""
+        )
         return (
             "<tr class='border-b border-gray-800 text-sm'>"
             f"<td class='py-2 px-3 text-gray-400'>#{row['position']}</td>"
@@ -390,6 +406,7 @@ def admin_page(r: Request):
             f"<td class='py-2 px-3 text-gray-300'>{scope}</td>"
             f"<td class='py-2 px-3 text-gray-500'>{row['days']}d</td>"
             f"<td class='py-2 px-3 text-gray-500'>{when}</td>"
+            f"<td class='py-2 px-3 whitespace-nowrap'>{cancel_btn}{front_btn}</td>"
             "</tr>"
         )
 
@@ -480,6 +497,7 @@ def admin_page(r: Request):
         "<th class='text-left p-3'>#</th><th class='text-left p-3'>Status</th>"
         "<th class='text-left p-3'>User</th><th class='text-left p-3'>Scope</th>"
         "<th class='text-left p-3'>Days</th><th class='text-left p-3'>Queued</th>"
+        "<th class='text-left p-3'>Actions</th>"
         f"</tr></thead><tbody>{queue_rows}</tbody></table></div>"
 
         "<h2 class='text-xs font-semibold text-gray-500 uppercase mb-3'>Insights Library</h2>"
@@ -520,8 +538,12 @@ def admin_insights_library(r: Request):
             row.get("cohort_name") if row["scope_type"] == "cohort"
             else (f"@{row['account_username']}" if row.get("account_username") else None)
         )
-        clean = _re.sub(r"\s*[·•|]\s*\d+[dhw]\s*$", "", raw).strip() if raw else f"{row['scope_type']} {row['scope_id']}"
-        name = html.escape(clean)
+        if raw:
+            clean = _re.sub(r"\s*[·•|]\s*\d+[dhw]\s*$", "", raw).strip()
+            name = html.escape(clean)
+        else:
+            scope_label = "cohort" if row["scope_type"] == "cohort" else "account"
+            name = f'<span class="text-gray-500">🪦 deleted {scope_label} #{row["scope_id"]}</span>'
         owner = html.escape(row.get("username") or "—")
         gen_at = row.get("generated_at")
         age = rel_time(gen_at) if gen_at else "?"
@@ -569,4 +591,66 @@ async def set_primary_provider(r: Request):
         "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()",
         (choice,),
     )
+    return RedirectResponse("/admin", status_code=303)
+
+
+# ── Admin queue controls ─────────────────────────────────────────────
+# Surgical fixes for stuck queue state — admin can kill a job that's
+# been "running" longer than reality (e.g. coordinator died mid-flight,
+# leaving an orphan row) or bump a pending job to position #1 when
+# something is more urgent than the current FIFO order says.
+
+@router.post("/admin/queue/{queue_id}/cancel", response_class=HTMLResponse)
+def admin_queue_cancel(queue_id: int, r: Request):
+    redir, _user = _require_admin(r)
+    if redir:
+        return redir
+    # Mark the queue row failed and cancel the underlying scrape_session
+    # (if any). Use 'failed' (not 'cancelled') so the queue worker's
+    # reconcile loop treats it terminally and won't retry.
+    row = q(
+        "SELECT session_id FROM scrape_queue WHERE id=%s", (queue_id,)
+    )
+    if not row:
+        return "<tr><td colspan='7' class='py-2 px-3 text-gray-500 text-xs'>not found</td></tr>"
+    sess_id = row[0].get("session_id")
+    q(
+        "UPDATE scrape_queue SET status='failed', ended_at=NOW(), "
+        "    error=COALESCE(error,'')||' [admin-cancelled]' "
+        " WHERE id=%s AND status IN ('pending','running')",
+        (queue_id,),
+    )
+    if sess_id:
+        q(
+            "UPDATE scrape_sessions SET status='cancelled', ended_at=NOW(), "
+            "    error_log=COALESCE(error_log,'')||' [admin-cancelled]' "
+            " WHERE id=%s AND status='running'",
+            (sess_id,),
+        )
+    # Empty row so the htmx outerHTML swap removes the line cleanly.
+    return ""
+
+
+@router.post("/admin/queue/{queue_id}/front", response_class=HTMLResponse)
+def admin_queue_front(queue_id: int, r: Request):
+    """Bump a pending row ahead of every other pending row by giving it
+    the lowest position number currently in use minus one. Position is
+    immutable per row by convention but admin override is fine here
+    since the queue worker just orders by position ASC."""
+    redir, _user = _require_admin(r)
+    if redir:
+        return redir
+    # Only bump if still pending.
+    row = q(
+        "SELECT status FROM scrape_queue WHERE id=%s", (queue_id,)
+    )
+    if not row or row[0]["status"] != "pending":
+        return RedirectResponse("/admin", status_code=303)
+    q(
+        "UPDATE scrape_queue SET position = (SELECT MIN(position) FROM scrape_queue) - 1 "
+        " WHERE id=%s",
+        (queue_id,),
+    )
+    # Re-render the whole tbody by 303-redirecting back to /admin —
+    # cleaner than rebuilding the queue table fragment here.
     return RedirectResponse("/admin", status_code=303)
