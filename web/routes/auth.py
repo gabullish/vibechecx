@@ -4,7 +4,7 @@ import html
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from web.core import get_user, require_login
+from web.core import get_user, require_login, _as_request
 from web.ui import AH, AF
 
 import sys, os
@@ -78,7 +78,7 @@ async def login_post(r: Request):
     rotate_sessions(uid)
     sid = create_session(uid)
     resp = RedirectResponse("/profiles", status_code=302)
-    secure = r.headers.get("x-forwarded-proto", "") == "https"
+    secure = _as_request(r).headers.get("x-forwarded-proto", "") == "https"
     resp.set_cookie(
         "vibechecx_session", sid, max_age=30 * 86400, httponly=True, samesite="lax", secure=secure,
     )
@@ -146,7 +146,7 @@ async def register_post(r: Request):
     rotate_sessions(uid)
     sid = create_session(uid)
     resp = RedirectResponse("/profiles", status_code=302)
-    secure = r.headers.get("x-forwarded-proto", "") == "https"
+    secure = _as_request(r).headers.get("x-forwarded-proto", "") == "https"
     resp.set_cookie(
         "vibechecx_session", sid, max_age=30 * 86400, httponly=True, samesite="lax", secure=secure,
     )
@@ -156,7 +156,7 @@ async def register_post(r: Request):
 
 @router.get("/logout", response_class=HTMLResponse)
 def logout_route(r: Request):
-    auth_logout(r.cookies.get("vibechecx_session"))
+    auth_logout(_as_request(r).cookies.get("vibechecx_session"))
     resp = RedirectResponse("/login", status_code=302)
     resp.delete_cookie("vibechecx_session")
     resp.delete_cookie("vibechecx_profile")

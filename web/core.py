@@ -37,7 +37,25 @@ def q(sql, params=None):
         conn.close()
 
 
+def _as_request(r):
+    """Return ``r`` if it is already a Starlette Request, otherwise wrap an
+    ASGI scope dict into one.
+
+    Why: on Python 3.14 + the current FastAPI/Starlette pinned on Render,
+    sync endpoints declared as ``def route(... r: Request, ...)`` sometimes
+    receive the raw ASGI scope dict instead of a constructed Request
+    object. Reading ``r.headers`` / ``r.cookies`` then crashes with
+    ``'dict' object has no attribute 'headers'`` — a global, hard-to-trace
+    failure mode. Wrapping here means routes never have to think about it.
+    """
+    if isinstance(r, dict):
+        from starlette.requests import Request as _Req
+        return _Req(r)
+    return r
+
+
 def get_user(r):
+    r = _as_request(r)
     return get_user_from_session(r.cookies.get("vibechecx_session"))
 
 
@@ -49,6 +67,7 @@ def require_login(r):
 
 
 def get_active_profile(r):
+    r = _as_request(r)
     pid = r.cookies.get("vibechecx_profile")
     if not pid:
         return None

@@ -6,7 +6,7 @@ import html
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from web.core import q, get_user, require_login, active_profile_name
+from web.core import q, get_user, require_login, active_profile_name, _as_request
 from web.ui import header_html, tip, fmt, fmt_compact, rel_time, type_pill, HF, _vibe
 from web.render_insights import _render_insights
 
@@ -436,6 +436,7 @@ def account_page(handle: str, r: Request, days: int = 365):
 
     # On an htmx swap (tab click), return only the body fragment — no header,
     # no footer. The client replaces #account-data outerHTML with this string.
+    r = _as_request(r)
     if r.headers.get("HX-Request"):
         return body
     return header_html(days, active_profile_name(r), is_admin=user.get("is_admin", False) if user else False, show_insights=False) + body + HF

@@ -112,8 +112,11 @@ def _ensure_table():
         _TABLE_READY = True  # Assume it exists; query will fail at runtime if not.
 
 
-def _client_ip(request: Request) -> str:
-    """Get real IP, honouring Cloudflare / proxy forwarding headers."""
+def _client_ip(request) -> str:
+    """Get real IP, honouring Cloudflare / proxy forwarding headers.
+    Tolerates an ASGI scope dict in place of a Request — see _as_request."""
+    if isinstance(request, dict):
+        request = Request(request)
     for header in ("CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"):
         val = request.headers.get(header)
         if val:
