@@ -65,8 +65,9 @@ class Worker:
 
     async def launch(self):
         from playwright.async_api import async_playwright
+        headful = os.environ.get("VIBECHECX_SCRAPER_HEADFUL", "false").lower() == "true"
         self._pw = await async_playwright().start()
-        self._browser = await self._pw.chromium.launch(headless=True)
+        self._browser = await self._pw.chromium.launch(headless=not headful)
         self._ctx = await _browser.open_context(
             self._browser, cookie_path=self.handle.path,
         )

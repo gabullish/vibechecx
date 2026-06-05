@@ -64,8 +64,21 @@ def make_grok():
     key = xai_api_key()
     if not key:
         return None
-    p = Provider(key, "https://api.x.ai/v1", "grok-2-latest")
+    model = os.environ.get("VIBECHECX_GROK_MODEL", "grok-4.20-0309")
+    p = Provider(key, "https://api.x.ai/v1", model)
     p.name = "grok"
+    return p
+
+
+def make_ollama():
+    import httpx as _httpx
+    try:
+        _httpx.get("http://localhost:11434/api/tags", timeout=2)
+    except Exception:
+        return None
+    model = os.environ.get("VIBECHECX_OLLAMA_MODEL", "qwen2.5:3b")
+    p = Provider("ollama", "http://localhost:11434/v1", model)
+    p.name = "ollama"
     return p
 
 
@@ -149,7 +162,13 @@ class LLMRouter:
 
 
 def make_router():
-    return LLMRouter(primary=make_deepseek(), secondary=make_grok())
+    deepseek = make_deepseek()
+    grok = make_grok()
+    ollama = make_ollama()
+    # If paid providers are absent, Ollama fills in as fallback.
+    primary = deepseek or ollama
+    secondary = grok or (ollama if primary is not ollama else None)
+    return LLMRouter(primary=primary, secondary=secondary)
 
 
 # ── DB ───────────────────────────────────────────────────────────────

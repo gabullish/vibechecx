@@ -92,6 +92,27 @@ def _render_insights(*, result, scope_type, scope_key, scope_display, period, pr
     Layout: 12-col grid → hero (col-span-12) → left data (8) + right action (4).
     Suppresses cards with no data. Hallucination warning banner sits above hero.
     """
+    # Derive the SSE stream URL and the reload URL from regen_endpoint.
+    # regen_endpoint is e.g. "/account/foo/generate-insights?period=7d"
+    # stream_url  →  "/account/foo/insights/stream?period=7d"
+    # reload_url  →  "/account/foo/insights?period=7d"
+    _base = regen_endpoint.split("?")[0].replace("/generate-insights", "")
+    _qs = f"?period={period}"
+    stream_url = f"{_base}/insights/stream{_qs}"
+    reload_url = f"{_base}/insights{_qs}"
+
+    def _open_modal_js(btn_class, label, btn_extra=""):
+        """Return an onclick button that dispatches the open-insights-modal event."""
+        detail = (
+            f"{{streamUrl:'{stream_url}',"
+            f"target:'{target_id}',"
+            f"reloadUrl:'{reload_url}'}}"
+        )
+        return (
+            f'<button onclick="window.dispatchEvent(new CustomEvent(\'open-insights-modal\',{{detail:{detail}}}))" '
+            f'{btn_extra}class="{btn_class}">{label}</button>'
+        )
+
     # Period segmented control — defined early so the empty-state response
     # can also include it. Otherwise clicking 14d/7d/24h on an uncached
     # period would strip the tabs and trap the user in the empty state.
@@ -113,9 +134,11 @@ def _render_insights(*, result, scope_type, scope_key, scope_display, period, pr
             f'{period_seg}'
             '<div class="text-center py-8">'
             '<p class="text-gray-500 text-sm mb-4">No insights yet for this period.</p>'
-            f'<button hx-post="{regen_endpoint}" hx-target="#{target_id}" hx-swap="innerHTML" '
-            'class="text-sm px-4 py-2 rounded bg-purple-700 hover:bg-purple-600 text-white transition">'
-            '✨ Generate Insights</button></div>'
+            + _open_modal_js(
+                "text-sm px-4 py-2 rounded bg-purple-700 hover:bg-purple-600 text-white transition",
+                "✨ Generate Insights",
+            )
+            + '</div>'
         )
 
     warnings = result.get("_warnings") or {}
@@ -255,10 +278,12 @@ def _render_insights(*, result, scope_type, scope_key, scope_display, period, pr
             f'title="Download as Markdown — readable on its own">⬇ MD</a>'
             if regen_endpoint and "/generate-insights" in regen_endpoint else ""
         )
-        + f'<button hx-post="{regen_endpoint}" hx-target="#{target_id}" hx-swap="innerHTML" '
-        'class="text-[11px] px-2.5 py-1 rounded bg-purple-700/80 hover:bg-purple-600 text-white transition" '
-        'title="Burn tokens, regenerate fresh">↻ Regenerate</button>'
-        '</div></div></div></section>'
+        + _open_modal_js(
+            "text-[11px] px-2.5 py-1 rounded bg-purple-700/80 hover:bg-purple-600 text-white transition",
+            "↻ Regenerate",
+            'title="Burn tokens, regenerate fresh" ',
+        )
+        + '</div></div></div></section>'
     )
 
     # Warning UI — two distinct surfaces:
@@ -284,10 +309,13 @@ def _render_insights(*, result, scope_type, scope_key, scope_display, period, pr
                 '<div class="text-amber-400 text-lg leading-none">⚠</div>'
                 '<div class="text-sm text-amber-200 flex-1">'
                 f'This insight fabricated <strong>{n}</strong> tweet ID{"s" if n != 1 else ""} not in your data — those references were dropped. '
-                f'<button class="ml-2 underline text-amber-300 hover:text-amber-100" hx-post="{regen_endpoint}" hx-target="#{target_id}" hx-swap="innerHTML">Re-run</button>'
-                '<details class="mt-1 text-xs text-amber-300/80"><summary class="cursor-pointer">Show fabricated IDs</summary>'
-                f'<code class="block mt-1 text-amber-200/80">{html.escape(", ".join(removed_t))}</code>'
-                '</details></div></div>'
+                + _open_modal_js(
+                    "ml-2 underline text-amber-300 hover:text-amber-100",
+                    "Re-run",
+                )
+                + '<details class="mt-1 text-xs text-amber-300/80"><summary class="cursor-pointer">Show fabricated IDs</summary>'
+                + f'<code class="block mt-1 text-amber-200/80">{html.escape(", ".join(removed_t))}</code>'
+                + '</details></div></div>'
             )
 
         chip_handles = [h for h in (external_h or legacy_removed_h) if len(h) >= 3]

@@ -417,10 +417,23 @@ def admin_page(r: Request):
     queue_summary = f"{depth['running']} running · {depth['waiting']} waiting"
 
     # AI providers
+    import httpx as _httpx
+    try:
+        _httpx.get("http://localhost:11434/api/tags", timeout=2)
+        ollama_status = "running"
+    except Exception:
+        ollama_status = "not running"
     provider_rows = (
         _provider_row("DeepSeek", deepseek_api_key(), "VIBECHECX_DEEPSEEK_MODEL", "deepseek-reasoner")
         + _provider_row("OpenAI",  openai_api_key(),  "VIBECHECX_OPENAI_MODEL",   "gpt-4o-mini")
         + _provider_row("Grok",    xai_api_key(),     "VIBECHECX_GROK_MODEL",     "grok-4.20-0309")
+        + (
+            "<tr class='border-b border-gray-800 text-sm'>"
+            "<td class='py-2 px-3 font-medium'>Ollama (local)</td>"
+            f"<td class='py-2 px-3'><span class='{'text-emerald-400' if ollama_status == 'running' else 'text-red-400'}'>{ollama_status}</span></td>"
+            f"<td class='py-2 px-3 text-gray-400'><code class='text-xs'>{html.escape(os.environ.get('VIBECHECX_OLLAMA_MODEL', 'qwen2.5:3b'))}</code></td>"
+            "</tr>"
+        )
     )
 
     # Primary provider toggle — read from DB (persists across Render redeploys)
@@ -428,7 +441,7 @@ def admin_page(r: Request):
         current_primary = (q("SELECT value FROM app_settings WHERE key='primary_provider'") or [{}])[0].get("value", "deepseek").strip().lower()
     except Exception:
         current_primary = "deepseek"
-    if current_primary not in ("deepseek", "openai", "grok"):
+    if current_primary not in ("deepseek", "openai", "grok", "ollama"):
         current_primary = "deepseek"
 
     def _radio(value, label):
@@ -449,6 +462,7 @@ def admin_page(r: Request):
         + _radio("deepseek", "DeepSeek")
         + _radio("openai",   "OpenAI")
         + _radio("grok",     "Grok")
+        + _radio("ollama",   "Ollama (local)")
         + "<button type='submit' class='ml-auto text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white transition'>Save</button>"
         + "<span class='text-[10px] text-gray-500'>takes effect on next generation</span>"
         + "</form>"
@@ -584,7 +598,7 @@ async def set_primary_provider(r: Request):
         return redir
     form = await r.form()
     choice = (form.get("primary") or "").strip().lower()
-    if choice not in ("deepseek", "openai", "grok"):
+    if choice not in ("deepseek", "openai", "grok", "ollama"):
         return RedirectResponse("/admin", status_code=303)
     q(
         "INSERT INTO app_settings(key, value, updated_at) VALUES ('primary_provider', %s, NOW()) "

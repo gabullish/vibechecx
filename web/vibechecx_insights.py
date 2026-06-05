@@ -394,6 +394,21 @@ def make_openai():
     return p
 
 
+def make_ollama():
+    # Local Ollama provider — used as last-resort fallback when all paid
+    # providers are unavailable. Requires Ollama running on localhost:11434.
+    import httpx as _httpx
+    try:
+        _httpx.get("http://localhost:11434/api/tags", timeout=2)
+    except Exception:
+        return None
+    import os as _os
+    model = _os.environ.get("VIBECHECX_OLLAMA_MODEL", "qwen2.5:3b")
+    p = Provider("ollama", "http://localhost:11434/v1", model)
+    p.name = "ollama"
+    return p
+
+
 def _parse_response(text):
     if not text:
         return None
@@ -1377,8 +1392,9 @@ def generate_insights(scope_type, scope_id, period="7d"):
 
     system_prompt, user_prompt = _build_prompt(data, period, scope_type)
     grok, deepseek, openai_p = make_grok(), make_deepseek(), make_openai()
-    if not grok and not deepseek and not openai_p:
-        return None, "no API keys configured"
+    ollama_p = make_ollama()
+    if not grok and not deepseek and not openai_p and not ollama_p:
+        return None, "no API keys configured and Ollama not available"
 
     internal_handles, allow_tweet_ids, external_handles = _build_allowlist(data, scope_type)
     # Default order: DeepSeek primary, OpenAI 4o-mini second, Grok last.
@@ -1405,11 +1421,12 @@ def generate_insights(scope_type, scope_id, period="7d"):
         except Exception:
             pass
     _orders = {
-        "openai":   [openai_p, deepseek, grok],
-        "grok":     [grok, deepseek, openai_p],
-        "deepseek": [deepseek, openai_p, grok],
+        "openai":   [openai_p, deepseek, grok, ollama_p],
+        "grok":     [grok, deepseek, openai_p, ollama_p],
+        "deepseek": [deepseek, openai_p, grok, ollama_p],
+        "ollama":   [ollama_p, deepseek, openai_p, grok],
     }
-    providers = [p for p in _orders.get(_primary, [deepseek, openai_p, grok]) if p]
+    providers = [p for p in _orders.get(_primary, [deepseek, openai_p, grok, ollama_p]) if p]
     last_error = None
     for provider in providers:
         try:

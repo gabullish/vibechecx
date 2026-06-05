@@ -6,8 +6,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+import asyncio
+import json as _json
+import queue as _queue
+import threading
+
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 import vibechecx_insights as vi  # noqa: E402
 
@@ -38,6 +43,54 @@ def account_generate_insights(handle: str, r: Request, period: str = "7d"):
             "account-insights-content",
         )
     return account_insights(handle, r, period)
+
+
+@router.get("/account/{handle}/insights/stream")
+async def account_insights_stream(handle: str, r: Request, period: str = "7d"):
+    redir = require_login(r)
+    if redir:
+        return HTMLResponse("<span>Not logged in</span>", status_code=401)
+    user = get_user(r)
+    h = handle.lower().lstrip("@")
+    ac = q("SELECT id FROM accounts WHERE username=%s", (h,))
+    if not ac:
+        return HTMLResponse("Account not found", status_code=404)
+    aid = ac[0]["id"]
+
+    progress_q = _queue.Queue()
+
+    def run_insights():
+        try:
+            progress_q.put({"status": "building prompt"})
+            insight, *_ = vi.cached_insights(
+                "account", aid, period, force=True,
+                user_id=user["id"], display_name=f"@{h} · {period}",
+            )
+            progress_q.put({"status": "finalizing", "done": True, "success": insight is not None})
+        except Exception as exc:
+            progress_q.put({"done": True, "success": False, "error": str(exc)})
+
+    threading.Thread(target=run_insights, daemon=True).start()
+
+    async def event_stream():
+        yield f"data: {_json.dumps({'status': 'starting'})}\n\n"
+        while True:
+            try:
+                msg = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: progress_q.get(timeout=300)
+                )
+                yield f"data: {_json.dumps(msg)}\n\n"
+                if msg.get("done"):
+                    break
+            except Exception:
+                yield f"data: {_json.dumps({'done': True, 'success': False, 'error': 'timeout'})}\n\n"
+                break
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/account/{handle}/insights", response_class=HTMLResponse)

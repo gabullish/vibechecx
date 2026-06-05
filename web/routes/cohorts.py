@@ -5,8 +5,13 @@ import json
 import html
 import subprocess
 
+import asyncio as _asyncio
+import json as _json
+import queue as _queue
+import threading as _threading
+
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, StreamingResponse
 
 from web.core import (
     q, get_user, require_login, DB,
@@ -1017,6 +1022,53 @@ def cohort_generate_insights(cid: int, r: Request, period: str = "7d"):
             "tab-insights",
         )
     return cohort_insights(cid, r, period)
+
+
+@router.get("/cohort/{cid}/insights/stream")
+async def cohort_insights_stream(cid: int, r: Request, period: str = "7d"):
+    redir = require_login(r)
+    if redir:
+        return HTMLResponse("<span>Not logged in</span>", status_code=401)
+    user = get_user(r)
+    if not q("SELECT 1 FROM cohorts WHERE id=%s AND user_id=%s", (cid, user["id"])):
+        return HTMLResponse("Cohort not found", status_code=404)
+    cohort_row = q("SELECT name FROM cohorts WHERE id=%s", (cid,))
+    cname = cohort_row[0]["name"] if cohort_row else f"cohort#{cid}"
+
+    progress_q = _queue.Queue()
+
+    def run_insights():
+        try:
+            progress_q.put({"status": "building prompt"})
+            insight, *_ = vi.cached_insights(
+                "cohort", cid, period, force=True,
+                user_id=user["id"], display_name=f"{cname} · {period}",
+            )
+            progress_q.put({"status": "finalizing", "done": True, "success": insight is not None})
+        except Exception as exc:
+            progress_q.put({"done": True, "success": False, "error": str(exc)})
+
+    _threading.Thread(target=run_insights, daemon=True).start()
+
+    async def event_stream():
+        yield f"data: {_json.dumps({'status': 'starting'})}\n\n"
+        while True:
+            try:
+                msg = await _asyncio.get_event_loop().run_in_executor(
+                    None, lambda: progress_q.get(timeout=300)
+                )
+                yield f"data: {_json.dumps(msg)}\n\n"
+                if msg.get("done"):
+                    break
+            except Exception:
+                yield f"data: {_json.dumps({'done': True, 'success': False, 'error': 'timeout'})}\n\n"
+                break
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/cohort/{cid}/insights", response_class=HTMLResponse)
