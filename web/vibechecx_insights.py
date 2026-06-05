@@ -1513,6 +1513,23 @@ def _ensure_timely_angles_table():
             PRIMARY KEY (scope_type, scope_id, period)
         )
     """)
+    # Self-heal older tables created before the PK existed: the ON CONFLICT
+    # in cache_timely_angles() needs a unique constraint on these columns.
+    # CREATE TABLE IF NOT EXISTS won't add it to a pre-existing bare table.
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'timely_angles_cache'::regclass
+                  AND contype IN ('p', 'u')
+            ) THEN
+                ALTER TABLE timely_angles_cache
+                    ADD CONSTRAINT timely_angles_cache_scope_uniq
+                    UNIQUE (scope_type, scope_id, period);
+            END IF;
+        END $$;
+    """)
     conn.commit()
     conn.close()
 
@@ -1680,10 +1697,16 @@ def cached_insights(scope_type, scope_id, period="7d",
                 (scope_type, scope_id, period, json.dumps(insights), provider_or_error,
                  user_id, display_name),
             )
-        # Invalidate the prior timely angles so we search fresh on next view.
-        cache_timely_angles(scope_type, scope_id, period, None)
-        # Fire the search in a background thread, doesn't block the response.
-        _fire_timely_angles_bg(scope_type, scope_id, period, insights)
+        # Timely angles are a secondary, optional feature. The insight is
+        # already persisted above, so any failure here (e.g. a missing table
+        # constraint) must never discard a successfully generated insight.
+        try:
+            # Invalidate the prior timely angles so we search fresh on next view.
+            cache_timely_angles(scope_type, scope_id, period, None)
+            # Fire the search in a background thread, doesn't block the response.
+            _fire_timely_angles_bg(scope_type, scope_id, period, insights)
+        except Exception as exc:
+            logger.warning("timely angles side-work failed (non-fatal): %s", exc)
         return insights, provider_or_error, False, 0
     return None, provider_or_error, False, None
 
