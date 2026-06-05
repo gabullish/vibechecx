@@ -17,11 +17,23 @@ from web.ui import tip, fmt, rel_time, header_html, HF  # noqa: E402
 def _ai_error_card(regen_endpoint: str, target_id: str) -> str:
     """Generic error card shown when all AI backends fail (quota, outage, etc).
     Never mentions provider names."""
+    # Derive the SSE stream + reload URLs from regen_endpoint and drive the
+    # retry through the modal flow (matches the generate buttons; avoids a
+    # blocking hx-post that would time out on a slow model).
+    _base = regen_endpoint.split("?")[0].replace("/generate-insights", "")
+    _period = "7d"
+    if "period=" in regen_endpoint:
+        _period = regen_endpoint.split("period=", 1)[1].split("&", 1)[0]
+    _detail = (
+        "{streamUrl:'" + f"{_base}/insights/stream?period={_period}" + "',"
+        "target:'" + target_id + "',"
+        "reloadUrl:'" + f"{_base}/insights?period={_period}" + "'}"
+    )
     return (
         f'<div id="{target_id}" class="col-span-12 rounded-xl border border-amber-900/40 bg-amber-950/20 p-6 text-center">'
         '<p class="text-amber-300 font-medium mb-2">VibeChecx AI is temporarily unavailable.</p>'
         '<p class="text-gray-400 text-sm mb-4">The service may be at capacity. Try again in a few minutes.</p>'
-        f'<button hx-post="{regen_endpoint}" hx-target="#{target_id}" hx-swap="outerHTML" '
+        f"<button onclick=\"window.dispatchEvent(new CustomEvent('open-insights-modal',{{detail:{_detail}}}))\" "
         'class="text-sm px-4 py-2 rounded bg-purple-700 hover:bg-purple-600 text-white transition">'
         '↻ Try again</button>'
         '</div>'

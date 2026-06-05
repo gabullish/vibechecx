@@ -395,16 +395,20 @@ def make_openai():
 
 
 def make_ollama():
-    # Local Ollama provider — used as last-resort fallback when all paid
-    # providers are unavailable. Requires Ollama running on localhost:11434.
+    # Ollama provider — used as last-resort fallback when all paid providers
+    # are unavailable. Defaults to a local instance on localhost:11434, but
+    # VIBECHECX_OLLAMA_BASE_URL can point at a remote instance (e.g. Boto's
+    # GPU exposed to Render via a Cloudflare tunnel). A wider health-check
+    # timeout accommodates tunnel round-trips.
+    import os as _os
     import httpx as _httpx
+    base = _os.environ.get("VIBECHECX_OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     try:
-        _httpx.get("http://localhost:11434/api/tags", timeout=2)
+        _httpx.get(f"{base}/api/tags", timeout=5)
     except Exception:
         return None
-    import os as _os
     model = _os.environ.get("VIBECHECX_OLLAMA_MODEL", "qwen2.5:3b")
-    p = Provider("ollama", "http://localhost:11434/v1", model)
+    p = Provider("ollama", f"{base}/v1", model)
     p.name = "ollama"
     return p
 

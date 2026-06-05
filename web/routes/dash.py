@@ -163,9 +163,10 @@ def dash(r: Request, tag: str = "", days: int = 0, sort: str = "likes"):
             # Target the full-width panel below the cohort grid so the insight
             # uses the dashboard's full width instead of being crammed into
             # the small grid-cell card.
-            f'<button hx-post="/cohort/{co_id}/generate-insights?period={ddays}d" '
-            f'hx-target="#dash-insight-panel" hx-swap="innerHTML" '
-            'hx-on:htmx:after-on-load="document.getElementById(\'dash-insight-panel\').scrollIntoView({behavior:\'smooth\',block:\'start\'})" '
+            f"<button onclick=\"window.dispatchEvent(new CustomEvent('open-insights-modal',{{detail:{{"
+            f"streamUrl:'/cohort/{co_id}/insights/stream?period={ddays}d',"
+            f"target:'dash-insight-panel',"
+            f"reloadUrl:'/cohort/{co_id}/insights?period={ddays}d'}}}}))\" "
             'class="text-xs mt-2 px-2 py-1 rounded bg-purple-700 hover:bg-purple-600 text-white transition">'
             f'✨ Insights</button>'
             '</div>'

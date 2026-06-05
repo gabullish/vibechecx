@@ -380,12 +380,20 @@ def account_page(handle: str, r: Request, days: int = 365):
             + '</div>'
         )
     else:
+        # Use the SSE/modal flow (not a blocking hx-post): generation can take
+        # 30-60s on the local/tunneled model, which would exceed edge timeouts.
+        _h = html.escape(handle)
+        _stream = f"/account/{_h}/insights/stream?period={ap}"
+        _reload = f"/account/{_h}/insights?period={ap}"
+        _detail = (
+            "{streamUrl:'" + _stream + "',"
+            "target:'account-insights-content',"
+            "reloadUrl:'" + _reload + "'}"
+        )
         cached_ins = (
             f'<div id="account-insights-content" class="text-center py-4 bg-gray-900 rounded-xl border border-gray-800">'
-            f'<button hx-post="/account/{html.escape(handle)}/generate-insights?period={ap}" '
-            f'hx-target="#account-insights-content" hx-swap="innerHTML" '
-            'class="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white transition" '
-            '_="on click toggle .hidden on #insights-loading then wait for htmx:afterOnLoad then add .hidden to #insights-loading">'
+            f"<button onclick=\"window.dispatchEvent(new CustomEvent('open-insights-modal',{{detail:{_detail}}}))\" "
+            'class="text-xs px-3 py-1.5 rounded bg-purple-700 hover:bg-purple-600 text-white transition">'
             '✨ Generate Insights</button></div>'
         )
     # Date tabs use htmx-swap of #account-data so clicking 7d/30d/1y doesn't

@@ -72,12 +72,13 @@ def make_grok():
 
 def make_ollama():
     import httpx as _httpx
+    base = os.environ.get("VIBECHECX_OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     try:
-        _httpx.get("http://localhost:11434/api/tags", timeout=2)
+        _httpx.get(f"{base}/api/tags", timeout=5)
     except Exception:
         return None
     model = os.environ.get("VIBECHECX_OLLAMA_MODEL", "qwen2.5:3b")
-    p = Provider("ollama", "http://localhost:11434/v1", model)
+    p = Provider("ollama", f"{base}/v1", model)
     p.name = "ollama"
     return p
 
