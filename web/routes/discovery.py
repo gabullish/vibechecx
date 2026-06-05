@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from vibechecx_config import COLLECTOR_DIR  # noqa: E402
 from vibechecx_scrape_status import start_session as ss_start  # noqa: E402
 
-from web.core import q, get_user, require_login  # noqa: E402
+from web.core import q, get_user, require_login, _as_request  # noqa: E402
 from web.ui import header_html, tip, HF  # noqa: E402
 
 logger = logging.getLogger("vibechecx.web")
@@ -123,6 +123,7 @@ def disc(r: Request, step: int = 1, error: str = ""):
     redir = require_login(r)
     if redir:
         return redir
+    r = _as_request(r)  # Py3.14: repair r before reading query_params (see web/core.py)
     e = (
         f'<div class="bg-red-900/50 text-red-300 text-sm p-3 rounded-lg mb-4">{html.escape(error)}</div>'
         if error
@@ -502,6 +503,7 @@ def wizard(step: int, r: Request):
     redir = require_login(r)
     if redir:
         return redir
+    r = _as_request(r)  # Py3.14: repair r before reading query_params (see web/core.py)
     user = get_user(r)
     if step == 1:
         existing = q(

@@ -40,7 +40,7 @@ def q(sql, params=None):
 import contextvars as _cv
 
 # Module-level contextvar that holds the in-flight Starlette Request.
-# Set by RequestContextMiddleware on every HTTP request; reset on exit.
+# Set by SecurityHeadersMiddleware on every HTTP request; reset on exit.
 # contextvars propagate through anyio.to_thread.run_sync (which FastAPI
 # uses for sync endpoints), so this works for every route regardless of
 # whether it's async def or plain def.

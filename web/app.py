@@ -48,7 +48,7 @@ app.include_router(admin_router)
 # Tests and external callers import these names directly from web.app.
 # Re-export from their new homes so those imports keep working.
 
-from web.core import NoActiveProfile, profile_account_ids  # noqa: E402, F401
+from web.core import NoActiveProfile, profile_account_ids, get_user, _as_request  # noqa: E402, F401
 from web.routes.cohorts import _leaderboard_query           # noqa: E402, F401
 from web.ui import tag_chip, period_buttons                 # noqa: E402, F401
 
@@ -93,17 +93,46 @@ _err_log = _logging.getLogger("vibechecx.errors")
 @app.exception_handler(Exception)
 async def _global_error_handler(request: Request, exc: Exception):
     tb = _traceback.format_exc()
-    _err_log.error("Unhandled exception on %s %s: %s", request.method, request.url.path, tb)
-    msg = _html.escape(str(exc)[:500])
-    return HTMLResponse(
-        f"<html><body style='font-family:sans-serif;padding:2rem;background:#111;color:#ccc'>"
-        f"<h2>Something went wrong.</h2>"
-        f"<p style='color:#f87171;background:#1e1e1e;padding:1rem;border-radius:8px;font-family:monospace;font-size:13px;'>{msg}</p>"
-        f"<details><summary style='cursor:pointer;color:#60a5fa;margin-top:1rem;'>Full traceback</summary>"
-        f"<pre style='background:#1e1e1e;padding:1rem;border-radius:8px;overflow:auto;font-size:12px;color:#ccc;margin-top:0.5rem;'>{_html.escape(tb[:8000])}</pre>"
-        f"</details></body></html>",
-        status_code=500,
-    )
+    # Always log the full traceback server-side, regardless of who's viewing.
+    try:
+        req = _as_request(request)
+        _err_log.error("Unhandled exception on %s %s: %s", req.method, req.url.path, tb)
+    except Exception:
+        _err_log.error("Unhandled exception (request unresolved): %s", tb)
+        req = request
+
+    # Only admins see the stack trace. Everyone else gets a generic page so we
+    # don't leak internals (paths, query strings, frames) to end users. Resolve
+    # the viewer defensively — a secondary failure here must not mask the
+    # original error, and it fails closed to non-admin (no detail exposed).
+    is_admin = False
+    try:
+        u = get_user(req)
+        is_admin = bool(u and u.get("is_admin"))
+    except Exception:
+        is_admin = False
+
+    if is_admin:
+        msg = _html.escape(str(exc)[:500])
+        body = (
+            "<html><body style='font-family:sans-serif;padding:2rem;background:#111;color:#ccc'>"
+            "<h2>Something went wrong.</h2>"
+            f"<p style='color:#f87171;background:#1e1e1e;padding:1rem;border-radius:8px;"
+            f"font-family:monospace;font-size:13px;'>{msg}</p>"
+            "<details><summary style='cursor:pointer;color:#60a5fa;margin-top:1rem;'>Full traceback</summary>"
+            f"<pre style='background:#1e1e1e;padding:1rem;border-radius:8px;overflow:auto;"
+            f"font-size:12px;color:#ccc;margin-top:0.5rem;'>{_html.escape(tb[:8000])}</pre>"
+            "</details></body></html>"
+        )
+    else:
+        body = (
+            "<html><body style='font-family:sans-serif;padding:2rem;background:#111;color:#ccc'>"
+            "<h2>Something went wrong.</h2>"
+            "<p style='color:#9ca3af;'>An unexpected error occurred. The team has been "
+            "notified. Please try again in a moment.</p>"
+            "</body></html>"
+        )
+    return HTMLResponse(body, status_code=500)
 
 _queue_worker_lockfile = None  # module-scope so the lock survives _startup()
 
@@ -121,6 +150,13 @@ async def _startup():
     # (Boto has the actual Playwright browser + cookies).
     if os.environ.get("RENDER"):
         _err_log.info("RENDER=1 — queue worker disabled; Boto handles scrapes")
+        return
+
+    # Local Boto dashboard runs as scraper-worker-only via render-worker.sh;
+    # this flag stops the dashboard process from also starting its own
+    # queue/metric/patrol workers (which would compete for the shared cookies).
+    if os.environ.get("VIBECHECX_DISABLE_WORKERS"):
+        _err_log.info("VIBECHECX_DISABLE_WORKERS set — queue/metric/patrol workers disabled")
         return
 
     lock_path = os.path.join(tempfile.gettempdir(), "vibechecx_queue_worker.lock")

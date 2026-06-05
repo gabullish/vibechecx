@@ -43,11 +43,15 @@ _CSP = (
 )
 
 _SECURITY_HEADERS = {
-    "X-Content-Type-Options":  "nosniff",
-    "X-Frame-Options":         "DENY",
-    "Referrer-Policy":         "strict-origin-when-cross-origin",
-    "Permissions-Policy":      "camera=(), microphone=(), geolocation=()",
-    "Content-Security-Policy": _CSP,
+    "X-Content-Type-Options":    "nosniff",
+    "X-Frame-Options":           "DENY",
+    "Referrer-Policy":           "strict-origin-when-cross-origin",
+    "Permissions-Policy":        "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy":   _CSP,
+    # Browsers ignore HSTS received over plain HTTP (local laptop), so this is
+    # harmless locally and pins HTTPS for a year on Render. No preload (hard to
+    # reverse, not needed).
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
 }
 
 
