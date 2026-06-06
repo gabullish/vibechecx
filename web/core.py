@@ -6,9 +6,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import psycopg2
+import psycopg2.pool
 from psycopg2.extras import RealDictCursor
 from fastapi import Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 
 from vibechecx_config import DB_CONFIG  # noqa: E402
 from vibechecx_auth import get_user_from_session  # noqa: E402
@@ -18,14 +19,27 @@ DB = DB_CONFIG  # back-compat alias
 
 # ── Connection / query helpers ────────────────────────────────────────
 
+_pool: "psycopg2.pool.ThreadedConnectionPool | None" = None
+
+
+def _get_pool() -> "psycopg2.pool.ThreadedConnectionPool":
+    global _pool
+    if _pool is None:
+        _pool = psycopg2.pool.ThreadedConnectionPool(
+            1, 8,
+            cursor_factory=RealDictCursor,
+            options="-c timezone=UTC",
+            **DB_CONFIG,
+        )
+    return _pool
+
 
 def q(sql, params=None):
-    """Execute a query, return list of dicts. One connection per call (we'll
-    move to a pool when traffic justifies it)."""
-    conn = psycopg2.connect(**DB_CONFIG, cursor_factory=RealDictCursor)
+    """Execute a query, return list of dicts. Uses a connection pool."""
+    pool = _get_pool()
+    conn = pool.getconn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SET timezone = 'UTC'")
             cur.execute(sql, params or ())
             if cur.description is None:
                 conn.commit()
@@ -33,8 +47,11 @@ def q(sql, params=None):
             rows = cur.fetchall()
         conn.commit()
         return [dict(r) for r in rows]
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        conn.close()
+        pool.putconn(conn)
 
 
 import contextvars as _cv
@@ -84,12 +101,32 @@ def _as_request(r):
 
 def get_user(r):
     r = _as_request(r)
-    return get_user_from_session(r.cookies.get("vibechecx_session"))
+    # Cache on request.state to avoid multiple DB lookups per request.
+    state = getattr(r, "state", None)
+    if state is not None and hasattr(state, "_vibechecx_user"):
+        return state._vibechecx_user
+    user = get_user_from_session(r.cookies.get("vibechecx_session"))
+    if state is not None:
+        try:
+            state._vibechecx_user = user
+        except AttributeError:
+            pass
+    return user
 
 
 def require_login(r):
-    """Return a RedirectResponse if not authenticated, else None."""
+    """Return a redirect response if not authenticated, else None.
+
+    For HTMX partial requests returns an HX-Redirect header instead of a
+    302 so the login page replaces the entire browser window, not just the
+    HTMX swap target.
+    """
+    r = _as_request(r)
     if not get_user(r):
+        if r.headers.get("hx-request"):
+            resp = Response(status_code=204)
+            resp.headers["HX-Redirect"] = "/login"
+            return resp
         return RedirectResponse("/login", status_code=302)
     return None
 

@@ -32,7 +32,7 @@ router = APIRouter()
 
 
 @router.get("/account/{handle}", response_class=HTMLResponse)
-def account_page(handle: str, r: Request, days: int = 365):
+def account_page(handle: str, r: Request, days: int = 7):
     handle = handle.lower().lstrip("@")
     # Case-insensitive lookup — prefer account with most tweets (handles duplicate casing)
     ac = q(
@@ -172,7 +172,7 @@ def account_page(handle: str, r: Request, days: int = 365):
     tweets = "".join(_tweet_card(t) for t in tw[:20])
 
     # Stats bar (rich breakdown with period label)
-    period_label = {1: "24h", 7: "7d", 14: "14d", 30: "30d", 365: "1y"}.get(days, f"{days}d")
+    period_label = {1: "24h", 7: "7d", 14: "14d", 30: "30d", 90: "90d", 365: "1y"}.get(days, f"{days}d")
     eng_total = agg["posts_likes"] + agg["posts_replies"] + agg["posts_retweets"] + agg["replies_likes"]
     eng_posts = agg["posts_likes"] + agg["posts_replies"] + agg["posts_retweets"]
     stats_bar = (
@@ -354,12 +354,14 @@ def account_page(handle: str, r: Request, days: int = 365):
         f'<p class="text-sm text-gray-300 leading-relaxed">{html.escape(vibe_desc)}</p>'
         '</div></div>'
     )
-    # AI Insights scope is independent of the top date scope. Top scope
-    # filters the stats display; insights have their own segmented control
-    # below. Default the initial render to 30d (the longest cached scope);
-    # the user switches scope via the insights-period buttons which htmx-swap
-    # just the insights body without re-rendering the page.
-    ap = "30d"
+    # Default to the most recently cached insight period so the user sees
+    # their data immediately on page load. Fall back to 7d if nothing is cached.
+    _cached_period_row = q(
+        "SELECT period FROM insights_cache WHERE scope_type='account' AND scope_id=%s "
+        "ORDER BY generated_at DESC LIMIT 1",
+        (aid,),
+    )
+    ap = _cached_period_row[0]["period"] if _cached_period_row else "7d"
     # Render the FULL cached insight panel inline. The cache lookup is one
     # JSONB read (~5ms); rendering takes another ~5ms; total ~10ms. There is
     # no LLM call here — that only fires when the user clicks "↻ Regenerate".

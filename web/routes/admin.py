@@ -659,12 +659,16 @@ def admin_queue_front(queue_id: int, r: Request):
         "SELECT status FROM scrape_queue WHERE id=%s", (queue_id,)
     )
     if not row or row[0]["status"] != "pending":
-        return RedirectResponse("/admin", status_code=303)
+        resp = HTMLResponse("", status_code=204)
+        resp.headers["HX-Redirect"] = "/admin"
+        return resp
     q(
         "UPDATE scrape_queue SET position = (SELECT MIN(position) FROM scrape_queue) - 1 "
         " WHERE id=%s",
         (queue_id,),
     )
-    # Re-render the whole tbody by 303-redirecting back to /admin —
-    # cleaner than rebuilding the queue table fragment here.
-    return RedirectResponse("/admin", status_code=303)
+    # HX-Redirect triggers a full browser navigation so HTMX reloads the
+    # whole admin page instead of injecting it into the queue tbody.
+    resp = HTMLResponse("", status_code=204)
+    resp.headers["HX-Redirect"] = "/admin"
+    return resp

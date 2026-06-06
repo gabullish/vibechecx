@@ -36,7 +36,7 @@ def dash(r: Request, tag: str = "", days: int = 0, sort: str = "likes"):
     # show the same canonical view, including AI insights inline.
     if prof.get("target_handle") and not prof.get("cohort_id"):
         from web.routes.accounts import account_page
-        return account_page(prof["target_handle"], r, days=(days or 365))
+        return account_page(prof["target_handle"], r, days=(days or 7))
     try:
         account_ids = profile_account_ids(prof)
     except NoActiveProfile:
@@ -461,7 +461,7 @@ def profile_view(r: Request, days: int = 0):
     # page is canonical and includes AI insights inline.
     if prof.get("target_handle") and not prof.get("cohort_id"):
         from web.routes.accounts import account_page
-        return account_page(prof["target_handle"], r, days=(days or 365))
+        return account_page(prof["target_handle"], r, days=(days or 7))
     try:
         account_ids = profile_account_ids(prof)
     except NoActiveProfile:
