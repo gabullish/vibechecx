@@ -164,12 +164,22 @@ def _render_insights(*, result, scope_type, scope_key, scope_display, period, pr
 
     _HANDLE_RE_LOCAL = re.compile(r"@([A-Za-z0-9_]{1,15})\b")
 
-    def linkify(text: str) -> str:
+    def linkify(text) -> str:
         """Escape + linkify @handles. Internal → /account/<h>, external →
         x.com/<h>, unknown → plain text. Safe for inline use anywhere we
         currently call html.escape() on prose."""
         if not text:
             return ""
+        # LLM occasionally returns a dict instead of a plain string (schema
+        # drift). Pull the first string value rather than crashing.
+        if not isinstance(text, str):
+            if isinstance(text, dict):
+                text = next(
+                    (v for v in text.values() if isinstance(v, str)),
+                    ", ".join(f"{k}: {v}" for k, v in text.items()),
+                )
+            else:
+                text = str(text)
         escaped = html.escape(text)
         def _sub(m):
             h = m.group(1)
@@ -184,22 +194,38 @@ def _render_insights(*, result, scope_type, scope_key, scope_display, period, pr
             return f"@{h}"
         return _HANDLE_RE_LOCAL.sub(_sub, escaped)
 
+    def _strs(key):
+        """Extract a string list, coercing any dicts the LLM sneaks in."""
+        raw = result.get(key) or []
+        out = []
+        for item in raw:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, dict):
+                out.append(next(
+                    (v for v in item.values() if isinstance(v, str)),
+                    str(item),
+                ))
+            else:
+                out.append(str(item))
+        return out
+
     behavioral_headline = result.get("behavioral_headline") or ""
     strategic_thesis = result.get("strategic_thesis") or ""
     account_classification = result.get("account_classification") or {}
     summary = result.get("period_summary") or ""
     topics = result.get("top_topics") or []
     top_performers = result.get("top_performers") or []
-    hidden_patterns = result.get("hidden_patterns") or []
-    whats_working = result.get("whats_working") or []
-    weaknesses = result.get("weaknesses") or []
-    to_improve = result.get("to_improve") or []
-    operator_actions = result.get("operator_actions") or []
+    hidden_patterns = _strs("hidden_patterns")
+    whats_working = _strs("whats_working")
+    weaknesses = _strs("weaknesses")
+    to_improve = _strs("to_improve")
+    operator_actions = _strs("operator_actions")
     content_series = result.get("content_series") or []
     posting_insight = result.get("posting_insight") or ""
     kudos = result.get("kudos") or []
     content_formula = result.get("content_formula") or ""
-    content_ideas = result.get("content_ideas") or []
+    content_ideas = _strs("content_ideas")
 
     age_str = f"{age_min}m ago" if age_min is not None else "just now"
     classification_type = html.escape(account_classification.get("type") or "")
